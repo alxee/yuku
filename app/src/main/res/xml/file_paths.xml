@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only the one staging directory image-copy writes into: the clipboard
+     hands a content:// URI to whatever app pastes it, and nothing else in
+     the app's storage should be reachable that way. -->
+<paths>
+    <cache-path name="shared" path="shared/" />
+</paths>

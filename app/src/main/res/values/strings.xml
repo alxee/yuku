@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Yuku</string>
+
+    <!-- Launcher long-press shortcuts. The short label is what the launcher
+         shows in the menu (and on a pinned icon, where it has very little
+         room); the long one is used wherever there is space for it. -->
+    <string name="shortcut_new_tab_short">New tab</string>
+    <string name="shortcut_new_tab_long">Open a new tab</string>
+    <string name="shortcut_new_private_tab_short">Private tab</string>
+    <string name="shortcut_new_private_tab_long">Open a new private tab</string>
+</resources>

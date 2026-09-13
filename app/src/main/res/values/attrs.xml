@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        The splash's kaomoji colour, as a theme attribute rather than a plain
+        @color, because it's the one thing about the splash that has to vary
+        with an *app* setting (the accent picked in Settings) and not just
+        with the device configuration.
+
+        Nothing about the app is running when the splash is drawn, so the
+        accent can't be read at that point — instead the choice is baked into
+        which theme the splash is drawn with. MainActivity hands the system a
+        per-accent SplashTheme.* (see MainActivity.applySplashTheme) via
+        SplashScreen.setSplashScreenTheme, and each of those themes differs
+        from Theme.Browser in this attribute alone. The frame drawables tint
+        themselves with ?attr/splashInk, so they follow whichever theme they
+        end up inflated with.
+    -->
+    <attr name="splashInk" format="color" />
+</resources>

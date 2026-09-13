@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- A paler tone of the system accent, for the dark ground. -->
+    <color name="splash_ink_dynamic">@android:color/system_accent1_200</color>
+    <!-- Aero's sky under the wallpaper accent. -->
+    <color name="splash_bg_aero_dynamic">@android:color/system_accent1_900</color>
+</resources>

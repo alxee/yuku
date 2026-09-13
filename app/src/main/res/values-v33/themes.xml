@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Theme.Browser again, restated in full (a style is picked per
+        configuration and not merged across qualifiers) for the one attribute
+        that only exists from API 33.
+
+        WITHOUT IT THIS SPLASH HAS NO ICON. A launch into a task record that
+        outlived the process is not a cold start as far as the platform is
+        concerned, and its default splash style is EMPTY: the ground is drawn
+        and the icon is dropped. Verified on device before this was added, both
+        through a recents tap and through an explicit start — a bare white
+        screen, correct colour, no cat. The theme's own icon is fine; nothing
+        was asking for it. windowSplashScreenBehavior=icon_preferred is the
+        request, and it is the only one available to the app: the alternative
+        lever, ActivityOptions.setSplashScreenStyle, belongs to whoever starts
+        the activity, which here is the launcher or the recents UI.
+
+        Below API 33 there is no such request, so those devices still get the
+        ground alone on this path.
+    -->
+    <style name="Theme.Browser" parent="BrowserBase">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_cats_fallback</item>
+        <item name="android:windowSplashScreenBehavior">icon_preferred</item>
+    </style>
+</resources>

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The calling app, staying exactly where it is for the length of the
+     overlay's own animation. Without an explicit no-op the platform's default
+     would slide it out from under us, which is precisely the "I have left the
+     app" reading this window is trying not to have.
+
+     Longer than either of the overlay's own animations (240 in, 250 out), so
+     the app is still being DRAWN underneath for every frame of both: fading
+     in over it needs it there, and sliding off it needs it there even more,
+     since the close uncovers it a strip at a time. -->
+<alpha xmlns:android="http://schemas.android.com/apk/res/android"
+    android:fromAlpha="1.0"
+    android:toAlpha="1.0"
+    android:duration="260" />

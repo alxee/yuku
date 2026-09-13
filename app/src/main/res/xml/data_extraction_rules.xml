@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API 31+ equivalent of backup_rules.xml; see the reasoning there. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="passwords/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="passwords/" />
+    </device-transfer>
+</data-extraction-rules>

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The themed-icon layer (Android 13+). Deliberately untinted: the system
+    tints a monochrome layer itself, from the wallpaper-derived scheme, and a
+    tint here would fight it.
+-->
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:src="@drawable/ic_launcher_cat"
+    android:gravity="fill" />

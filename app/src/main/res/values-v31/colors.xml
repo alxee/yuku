@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        AccentTheme.Dynamic on API 31+: the kaomoji takes the wallpaper-derived
+        system accent, the same source the app's own Dynamic scheme draws from,
+        so the splash matches the browser it opens into.
+
+        Only the *ink* is accented. The ground stays the plain neutral from
+        values/, at every API level.
+
+        This reaches the splash the same way every other accent does — through
+        SplashTheme.Dynamic (values/themes.xml), registered by MainActivity.
+        It is deliberately NOT @color/splash_ink, i.e. not what Theme.Browser
+        falls back to when nothing is registered: that fallback stays the app's
+        own neutral, so a dropped registration can't put the system accent on
+        the splash of a user who chose a swatch.
+    -->
+    <color name="splash_ink_dynamic">@android:color/system_accent1_600</color>
+    <!-- Aero's sky under the wallpaper accent. -->
+    <color name="splash_bg_aero_dynamic">@android:color/system_accent1_50</color>
+</resources>

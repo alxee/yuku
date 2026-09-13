@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  A browser has to be able to load http:// — a router admin page, a LAN
+  device, an old site. From API 28 cleartext is refused by default, which is
+  why "http://192.168.1.1" failed with a bare net::ERR_CLEARTEXT_NOT_PERMITTED
+  even when the address was typed in full.
+
+  Cleartext is permitted for user-entered content, but the app's OWN traffic
+  (favicon lookups, search suggestions) is https-only and stays that way: it
+  keeps the default "no user-added CAs" trust anchors, so a device-installed
+  root can't silently sit in front of it.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

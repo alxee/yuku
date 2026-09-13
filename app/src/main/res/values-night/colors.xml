@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="splash_bg">#000000</color>
+    <color name="splash_bg_app">#040403</color>
+    <color name="splash_ink">#8B8981</color>
+    <color name="splash_ink_dynamic">#8B8981</color>
+
+    <!-- Lighter tones of the same accents, for the dark ground above. -->
+    <color name="splash_ink_graphite">#B9B9B6</color>
+    <color name="splash_ink_red">#EF8380</color>
+    <color name="splash_ink_orange">#FFC070</color>
+    <color name="splash_ink_yellow">#FBC874</color>
+    <color name="splash_ink_green">#9AD59D</color>
+    <color name="splash_ink_teal">#70FFF0</color>
+    <color name="splash_ink_blue">#7FBBF0</color>
+    <color name="splash_ink_purple">#D389E6</color>
+    <color name="splash_ink_pink">#EF80A9</color>
+
+    <!-- TUI's neutral dark page, and Nothing's OLED-black end. Grounds only:
+         the ink over them is the accent's from above. See values/colors.xml. -->
+    <color name="splash_bg_tui">#0D0D0D</color>
+    <color name="splash_bg_nothing">#030303</color>
+
+    <!-- 98's desktop with the light taken out of it, and the ink stepped
+         down from window white to the theme's own text so it doesn't glare
+         off a dark ground. See values/colors.xml. -->
+    <color name="splash_bg_98">#001E1F</color>
+    <color name="splash_ink_98">#E8E8E8</color>
+
+    <!-- Aero's sky after dark: still a sky, with the light out of it.
+         Tracks `Glass.skyDark`. See values/colors.xml. -->
+    <color name="splash_bg_aero">#08121C</color>
+    <!-- Per-accent skies: `aeroAccentSky` at each swatch's own ink. Track by hand. -->
+    <color name="splash_bg_aero_graphite">#202326</color>
+    <color name="splash_bg_aero_red">#281A1D</color>
+    <color name="splash_bg_aero_orange">#2A241B</color>
+    <color name="splash_bg_aero_yellow">#2A251C</color>
+    <color name="splash_bg_aero_green">#1B2722</color>
+    <color name="splash_bg_aero_teal">#152D2E</color>
+    <color name="splash_bg_aero_blue">#17232E</color>
+    <color name="splash_bg_aero_purple">#241B2D</color>
+    <color name="splash_bg_aero_pink">#281A24</color>
+    <color name="splash_bg_aero_dynamic">@color/splash_bg_aero</color>
+
+    <color name="ic_launcher_bg">#111111</color>
+    <color name="ic_launcher_ink">#FFFFFF</color>
+</resources>

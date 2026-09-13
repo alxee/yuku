@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Closing: the overlay goes back down off the bottom edge, which is how
+    Chrome's custom tab closes and is a different statement from the one the
+    ENTRANCE makes on purpose.
+
+    Arriving, a full-height slide would be wrong — it is Android's way of
+    saying "you have gone somewhere else", and this window is meant to say
+    "this is on top of what you were doing" — so it fades up a finger's width
+    and settles (custom_tab_enter). Leaving is the opposite situation: there
+    is nothing to settle onto and nothing to be careful about claiming, the
+    app underneath is already drawn and is where the user is going. Sliding
+    the whole thing off the bottom says the page has been PUT DOWN, and it
+    leaves the caller uncovered progressively rather than dissolving over it,
+    which is what a fade at this size actually looks like — a brief moment of
+    two apps mixed together.
+
+    It is also the half of the back gesture that can only be drawn by the
+    platform: by the time this runs, a swipe-back has already shrunk the
+    window to 90% under the finger (see CustomTabScreen's PredictiveBackHandler),
+    so what leaves is a card being let go of rather than a screen being torn
+    away.
+
+    No alpha: a slide that also fades reads as two things happening to one
+    window. `Accelerate` from ui/Motion.kt — an exit leaves rather than eases.
+-->
+<translate xmlns:android="http://schemas.android.com/apk/res/android"
+    android:fromYDelta="0"
+    android:toYDelta="100%p"
+    android:duration="250"
+    android:interpolator="@interpolator/accelerate_leave" />

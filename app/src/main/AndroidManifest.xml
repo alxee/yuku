@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Without this the WebView renders a blank page and logs nothing useful. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Saving a download to the public Downloads folder. From API 29 the
+         MediaStore insert needs
+         no permission at all, hence the cap. -->
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28" />
+
+    <!--
+        What a PAGE can ask for, which the app has to hold before it can hand
+        any of it on: a site allowed the camera by the user gets nothing at
+        all unless this app may reach the camera too. Requested at the point
+        of use, never at launch — see BrowserViewModel's site-permissions
+        section — so a browser that is never asked for the camera never asks
+        the user for one either.
+
+        Every one is optional hardware: a phone with no camera should still
+        install the browser.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+
+    <!-- A site's notifications (see core/WebNotifications.kt). Runtime on
+         API 33+, and asked for the same way as the three above: only once a
+         site has been allowed to send them. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+
+    <!-- Lets the app resolve other browsers / share targets on API 30+. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND" />
+            <data android:mimeType="text/plain" />
+        </intent>
+        <!--
+            Lets Settings > Passwords name the password manager the user has
+            actually chosen. Without this the autofill service's package is
+            invisible on API 30+ and the row could only say "another app".
+        -->
+        <intent>
+            <action android:name="android.service.autofill.AutofillService" />
+        </intent>
+    </queries>
+
+    <!--
+        Predictive back (API 33+). With this on and no enabled BackHandler in
+        the composition, the system itself handles the gesture: the window
+        zooms out under the finger and the app closes on release, the same as
+        every other app on the phone. Without it the platform falls back to
+        the legacy path, which just finishes the Activity with no animation.
+        Every in-app back level is a BackHandler, so nothing here bypasses it.
+    -->
+    <application
+        android:enableOnBackInvokedCallback="true"
+        android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:usesCleartextTraffic="true"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Browser">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density"
+            android:windowSoftInputMode="adjustNothing"
+            android:theme="@style/Theme.Browser">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Required to appear in Settings > Default apps > Browser app. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.APP_BROWSER" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+
+            <!-- The launcher's long-press menu: New tab / Private tab. Hung
+                 on the LAUNCHER activity, which is where the system looks for
+                 them. See res/xml/shortcuts.xml. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+        </activity>
+        <!--
+            A link tapped in another app. Deliberately NOT MainActivity: this
+            one has no task affinity of its own, so `startActivity` from the
+            calling app stacks it on THAT app's back stack — closing it pops
+            straight back into the conversation the link came from, and the
+            user's own tabs are never disturbed. Standard launch mode for the
+            same reason: a second link is a second overlay on that stack, not
+            a hijack of the one already open.
+
+            MainActivity keeps LAUNCHER and APP_BROWSER (which is what puts
+            the app in Settings > Default apps), and still receives explicit
+            VIEW intents — "Open in Yuku" in the overlay's menu is one.
+        -->
+        <activity
+            android:name=".CustomTabActivity"
+            android:exported="true"
+            android:launchMode="standard"
+            android:taskAffinity=""
+            android:autoRemoveFromRecents="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|uiMode|density"
+            android:windowSoftInputMode="adjustNothing"
+            android:theme="@style/Theme.Browser.CustomTab">
+
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+            </intent-filter>
+        </activity>
+
+        <!--
+            What makes an app using CustomTabsIntent pick us at all: it asks
+            the package manager which browser exports this action, and an app
+            with no answer falls back to its own WebView (or to a plain VIEW
+            intent). See CustomTabsProvider — the service itself does little
+            beyond warming the engine up.
+        -->
+        <service
+            android:name=".CustomTabsProvider"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.support.customtabs.action.CustomTabsService" />
+            </intent-filter>
+        </service>
+
+        <!-- Hands out the cached image that "Copy image" stages, so the app
+             pasting it can read the bytes. Cache dir only — see file_paths. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>

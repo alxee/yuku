@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The overlay appearing over the app that opened it. A FADE with a short
+    rise under it — 6% of the screen, not the whole height — because the two
+    read as completely different events: a full-height slide is how Android
+    says "you have gone somewhere else", while something that fades up a
+    finger's width says "this is on top of what you were doing". The app
+    behind it never moves (custom_tab_hold), and during the transition it is
+    still being drawn, so the fade is genuinely a fade ONTO it.
+
+    240ms rather than the 300ms of the app's own full-screen surfaces: less
+    ground to cover, and an overlay that takes as long to arrive as a page
+    transition stops feeling like one. No overshoot — this settles at 0 in
+    POSITION, and carrying past would lift the page off the bottom edge and
+    show a strip of the app underneath.
+-->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shareInterpolator="false">
+    <alpha
+        android:fromAlpha="0.0"
+        android:toAlpha="1.0"
+        android:duration="200"
+        android:interpolator="@android:interpolator/linear_out_slow_in" />
+    <translate
+        android:fromYDelta="6%p"
+        android:toYDelta="0"
+        android:duration="240"
+        android:interpolator="@android:interpolator/fast_out_slow_in" />
+</set>

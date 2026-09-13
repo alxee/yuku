@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The two things a browser is opened to DO, on the launcher's long press.
+
+    Static rather than dynamic (ShortcutManager): neither of these depends on
+    anything the app knows — no recent site, no session — so there is nothing
+    to publish at runtime and nothing to keep in step. The system reads them
+    from here at install time.
+
+    Both target MainActivity, which is `singleTop`, so a shortcut used while
+    the browser is already running arrives at onNewIntent rather than
+    building a second Activity on top of the session. The intent carries an
+    ACTION of ours rather than an extra on VIEW: VIEW here means "a link from
+    another app" and is answered with a tab on that URL — see handleIntent.
+
+    THIS FILE IS A TEMPLATE, not a resource — the build writes it into a
+    generated res directory per variant with ${applicationId} substituted, and
+    that is why it lives outside res/. See app/build.gradle.kts.
+
+    A shortcut's intent has to be EXPLICIT: its action is ours alone and no
+    intent-filter answers it, so without a real package name there is nothing
+    for the launcher to start, which is what "app isn't installed" was. Two
+    things that look like they would supply one and do not: `${applicationId}`
+    is substituted into AndroidManifest.xml and nothing else, so in a resource
+    it reaches the launcher verbatim; and a string RESOURCE is not resolved
+    either — the framework's shortcut parser reads this attribute as raw text,
+    so @string/... arrives as the literal "@2131689598". Hence the generated
+    copy, taking the id from the variant so the debug suffix cannot drift.
+
+    android:enabled is on both and no shortcut is ever disabled: a disabled
+    static shortcut has to stay declared forever to keep its pinned copies
+    working, which is not a debt worth taking on for two entries.
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <shortcut
+        android:shortcutId="new_tab"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_new_tab"
+        android:shortcutShortLabel="@string/shortcut_new_tab_short"
+        android:shortcutLongLabel="@string/shortcut_new_tab_long">
+        <intent
+            android:action="com.yuku.browser.action.NEW_TAB"
+            android:targetPackage="${applicationId}"
+            android:targetClass="com.yuku.browser.MainActivity" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="new_private_tab"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_new_private_tab"
+        android:shortcutShortLabel="@string/shortcut_new_private_tab_short"
+        android:shortcutLongLabel="@string/shortcut_new_private_tab_long">
+        <intent
+            android:action="com.yuku.browser.action.NEW_PRIVATE_TAB"
+            android:targetPackage="${applicationId}"
+            android:targetClass="com.yuku.browser.MainActivity" />
+    </shortcut>
+</shortcuts>

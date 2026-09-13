@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The splash ground: plain white, reversed to plain black under
+         values-night. Deliberately not the app's own near-white and not any
+         accent wash. This ground is also the one a launch gets when the
+         registered theme is dropped (see MainActivity.followThemeOnSplash) —
+         a launch into a task record that outlived the process — so it has to
+         be a colour that belongs to no look in particular rather than to the
+         wrong one. Plain white/black is the shortest thing to look at and the
+         least it can be wrong by.
+
+         Light/dark here follows the *system* setting (values-night), not the
+         in-app ThemeMode: none of the app is running yet to be asked, and
+         the splash is drawn from resources alone. -->
+    <color name="splash_bg">#FFFFFF</color>
+
+    <!-- The COLD-START splash ground: the app's own near-white
+         (BrowserPalette.emptyBg), reversed under values-night, so that splash
+         hands off to the first frame without a step. Every SplashTheme.* takes
+         it (via Theme.Browser.Splash); only the fallback above, which belongs
+         to no look, is the plain white/black. TUI, Nothing and 98 replace it
+         with their own canvas below. -->
+    <color name="splash_bg_app">#FAF9F5</color>
+
+    <!-- The FALLBACK kaomoji colour: what ?attr/splashInk resolves to in
+         Theme.Browser itself, which is the theme the system draws the splash
+         with whenever no per-accent one is registered — the first launch after
+         install, and any launch where the platform has dropped the
+         registration (see MainActivity.followThemeOnSplash). Deliberately the
+         app's muted grey at EVERY API level, rather than the system accent: a
+         splash in a colour the user never picked reads as another app's, where
+         the grey reads as "no accent yet". Every accent,
+         Dynamic included, overrides the attribute through its own
+         SplashTheme.* — see values/themes.xml. -->
+    <color name="splash_ink">#87857E</color>
+
+    <!-- AccentTheme.Dynamic ("Auto"). Pre-31 the same muted grey, since
+         there's no system palette to follow; from 31 the wallpaper-derived
+         accent (values-v31), which is what the app's own Dynamic scheme is
+         built from. -->
+    <color name="splash_ink_dynamic">#87857E</color>
+
+    <!-- One kaomoji colour per fixed accent swatch, mirroring
+         AccentTheme.color() in ui/theme/Theme.kt at the same tone the app
+         builds its primary from (tone 42 here, 72 under values-night), so the
+         cat is the colour the browser it opens into is about to be. -->
+    <color name="splash_ink_graphite">#6D6D69</color>
+    <color name="splash_ink_red">#BE1C18</color>
+    <color name="splash_ink_orange">#D67700</color>
+    <color name="splash_ink_yellow">#D08306</color>
+    <color name="splash_ink_green">#3F9743</color>
+    <color name="splash_ink_teal">#00D6C0</color>
+    <color name="splash_ink_blue">#1671C0</color>
+    <color name="splash_ink_purple">#9425B1</color>
+    <color name="splash_ink_pink">#BE1855</color>
+
+    <!-- The two tintable special themes (SpecialTheme.Tui / .Nothing) don't
+         recolour the app, they replace it — so unlike a swatch they bring
+         their own GROUND, which is what the first frame after the splash is
+         actually painted in. The ink over it is still the accent's from
+         above: a swatch tints these looks (ColorScheme.tintedWith), so the
+         kaomoji has to be the colour the app is about to open in and not the
+         look's own out-of-the-box accent. That is why there is no
+         splash_ink_tui / splash_ink_nothing here.
+
+         TUI: the milk `base` ui/theme/Tui.kt hands Material as `background`
+         (the neutral dark one under values-night). -->
+    <color name="splash_bg_tui">#FCFBF7</color>
+
+    <!-- Nothing: the off-white it calls paper (true black under values-night,
+         which is the point of that end).
+
+         The ground must track `Dot.paper` in ui/theme/Nothing.kt BY HAND —
+         it is a resource, read by the system before any of the app's code
+         runs, so nothing links the two and a change to the palette leaves
+         this behind. It did: the palette's greys went to 0% saturation and
+         this stayed at the old warm #F4F3F0, which is a launch screen in a
+         colour the app it opens into no longer uses. -->
+    <color name="splash_bg_nothing">#FAFAFA</color>
+
+    <!-- 98: the desktop, and the kaomoji drawn on it in window white. The
+         ground is the DESKTOP rather than the silver a window is made of,
+         and that is the same call the theme itself makes for the tab
+         switcher (see ui/theme/Ninety8.kt): before there is a window there
+         is a desktop, which is exactly the state a splash screen is in.
+
+         Tracks `Silver.desktop` / `Silver.hilight` in ui/theme/Ninety8.kt BY
+         HAND, for the reason the Nothing pair above spells out — this is a
+         resource the system reads before a line of app code runs, and
+         nothing links the two. -->
+    <color name="splash_bg_98">#008080</color>
+    <color name="splash_ink_98">#FFFFFF</color>
+
+    <!-- Aero: the SKY, which is that look's own answer to the same question
+         98's desktop answers — before there is a pane of glass there is
+         something behind it, and a splash is exactly that state. It is the
+         switcher's and the empty screen's ground too (see `Glass.sky` in
+         ui/theme/Aero.kt), so the launch hands off to the first frame in the
+         colour that frame is already standing on.
+
+         Tracks `Glass.sky` BY HAND, with the same wire and the same hazard
+         the Nothing and 98 grounds above spell out: a resource the system
+         reads before a line of app code runs, with nothing linking the two.
+
+         No splash_ink_aero — the ink is the accent's, as it is for TUI and
+         Nothing, because a swatch TINTS this look rather than replacing it. -->
+    <color name="splash_bg_aero">#D6E7F7</color>
+    <!-- Per-accent skies: `aeroAccentSky` at each swatch's own ink. Track by hand. -->
+    <color name="splash_bg_aero_graphite">#DEE0E3</color>
+    <color name="splash_bg_aero_red">#ECD3D5</color>
+    <color name="splash_bg_aero_orange">#F0E2D1</color>
+    <color name="splash_bg_aero_yellow">#EFE4D2</color>
+    <color name="splash_bg_aero_green">#D6E8DD</color>
+    <color name="splash_bg_aero_teal">#CBF2F2</color>
+    <color name="splash_bg_aero_blue">#CFE1F2</color>
+    <color name="splash_bg_aero_purple">#E5D4EF</color>
+    <color name="splash_bg_aero_pink">#ECD2E0</color>
+    <color name="splash_bg_aero_dynamic">@color/splash_bg_aero</color>
+
+    <!-- The launcher icon, black on white — and reversed under values-night.
+         Which one a launcher gets is decided by the configuration it loads
+         the icon with, i.e. the system light/dark setting, not the browser's
+         own ThemeMode: the icon is drawn by another process entirely. -->
+    <color name="ic_launcher_bg">#FFFFFF</color>
+    <color name="ic_launcher_ink">#111111</color>
+</resources>

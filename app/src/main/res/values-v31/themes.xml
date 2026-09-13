@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        API 31+ has a real splash screen, and it ignores windowBackground: it
+        draws windowSplashScreenBackground with the app's launcher icon on
+        top. This app declares no android:icon, which is why the default
+        Android robot was showing there — the cats are pointed at explicitly
+        below, so the launcher icon is no longer what the splash falls back
+        to.
+
+        This is the FALLBACK splash, and it is a different splash on purpose.
+        It is what a launch gets when no theme was registered for it: the first
+        launch after install, and — the case nothing app-side can reach — a
+        launch into a task record that outlived the process
+        (MainActivity.followThemeOnSplash). Everything about it is fixed at
+        build time, so rather than a worse copy of the cold-start splash it is
+        the plain statement of one: a single still face
+        (@drawable/splash_cats_fallback, which no order ever names) in the app's
+        muted grey on plain white or black, with no animation and so no
+        windowSplashScreenAnimationDuration for the platform to wait out.
+        MainActivity skips its minimum hold on this path too.
+
+        The cold-start splash is the other one — twenty cats cycling in the
+        accent's own colours, values-v31/splash_orders.xml.
+
+        Light/dark still works here, because the system resolves it from the
+        current configuration rather than from anything the app remembered; it
+        is the one thing about this splash that isn't frozen.
+    -->
+    <style name="Theme.Browser" parent="BrowserBase">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_cats_fallback</item>
+    </style>
+
+    <!-- see values-v33 for windowSplashScreenBehavior -->
+
+    <!--
+        The base every registered (i.e. cold-start) splash theme inherits: the
+        app's own canvas, which is what that launch is about to open into.
+        Theme.Browser above keeps the plain white/black instead, because it is
+        the splash for the launch nothing chose — see there. The two grounds
+        are the whole difference; the ink and the icon are set per theme.
+    -->
+    <style name="Theme.Browser.Splash" parent="Theme.Browser">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_app</item>
+    </style>
+
+    <!--
+        Same overlay theme as values/themes.xml, minus the cats: from API 31
+        the system draws a splash for any activity that starts the process,
+        and this one starts over the app the user tapped a link in. A neutral
+        ground slides up; the browser's own launch animation belongs to the
+        browser's own launch.
+    -->
+    <style name="Theme.Browser.CustomTab" parent="Theme.Browser">
+        <item name="android:windowAnimationStyle">@style/Animation.Browser.CustomTab</item>
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_app</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@null</item>
+    </style>
+
+    <!--
+        The special themes' splashes: the GROUND they own, over the accent's
+        own ink. A swatch only ever moves the ink, because the app it opens
+        into is the same app in another colour; TUI and Nothing are a
+        different interface, and their canvas is neither the near-white nor
+        the near-black of @color/splash_bg — but the accent still reaches
+        them (ColorScheme.tintedWith), so the cat is the swatch's colour and
+        only the paper under it is the look's. Hence the cross product: each
+        of these inherits a swatch theme from values/themes.xml for the ink
+        and adds the one attribute that is the look's. Restated in full
+        rather than inherited from the values/ pair, since a style is picked
+        per configuration and not merged across qualifiers.
+    -->
+    <style name="SplashTheme.Tui.Dynamic" parent="SplashTheme.Dynamic">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_tui</item>
+    </style>
+    <style name="SplashTheme.Tui.Graphite" parent="SplashTheme.Graphite">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_tui</item>
+    </style>
+    <style name="SplashTheme.Tui.Red" parent="SplashTheme.Red">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_tui</item>
+    </style>
+    <style name="SplashTheme.Tui.Orange" parent="SplashTheme.Orange">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_tui</item>
+    </style>
+    <style name="SplashTheme.Tui.Yellow" parent="SplashTheme.Yellow">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_tui</item>
+    </style>
+    <style name="SplashTheme.Tui.Green" parent="SplashTheme.Green">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_tui</item>
+    </style>
+    <style name="SplashTheme.Tui.Teal" parent="SplashTheme.Teal">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_tui</item>
+    </style>
+    <style name="SplashTheme.Tui.Blue" parent="SplashTheme.Blue">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_tui</item>
+    </style>
+    <style name="SplashTheme.Tui.Purple" parent="SplashTheme.Purple">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_tui</item>
+    </style>
+    <style name="SplashTheme.Tui.Pink" parent="SplashTheme.Pink">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_tui</item>
+    </style>
+    <style name="SplashTheme.Nothing.Dynamic" parent="SplashTheme.Dynamic">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_nothing</item>
+    </style>
+    <style name="SplashTheme.Nothing.Graphite" parent="SplashTheme.Graphite">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_nothing</item>
+    </style>
+    <style name="SplashTheme.Nothing.Red" parent="SplashTheme.Red">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_nothing</item>
+    </style>
+    <style name="SplashTheme.Nothing.Orange" parent="SplashTheme.Orange">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_nothing</item>
+    </style>
+    <style name="SplashTheme.Nothing.Yellow" parent="SplashTheme.Yellow">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_nothing</item>
+    </style>
+    <style name="SplashTheme.Nothing.Green" parent="SplashTheme.Green">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_nothing</item>
+    </style>
+    <style name="SplashTheme.Nothing.Teal" parent="SplashTheme.Teal">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_nothing</item>
+    </style>
+    <style name="SplashTheme.Nothing.Blue" parent="SplashTheme.Blue">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_nothing</item>
+    </style>
+    <style name="SplashTheme.Nothing.Purple" parent="SplashTheme.Purple">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_nothing</item>
+    </style>
+    <style name="SplashTheme.Nothing.Pink" parent="SplashTheme.Pink">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_nothing</item>
+    </style>
+    <style name="SplashTheme.Aero.Dynamic" parent="SplashTheme.Dynamic">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_aero_dynamic</item>
+    </style>
+    <style name="SplashTheme.Aero.Graphite" parent="SplashTheme.Graphite">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_aero_graphite</item>
+    </style>
+    <style name="SplashTheme.Aero.Red" parent="SplashTheme.Red">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_aero_red</item>
+    </style>
+    <style name="SplashTheme.Aero.Orange" parent="SplashTheme.Orange">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_aero_orange</item>
+    </style>
+    <style name="SplashTheme.Aero.Yellow" parent="SplashTheme.Yellow">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_aero_yellow</item>
+    </style>
+    <style name="SplashTheme.Aero.Green" parent="SplashTheme.Green">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_aero_green</item>
+    </style>
+    <style name="SplashTheme.Aero.Teal" parent="SplashTheme.Teal">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_aero_teal</item>
+    </style>
+    <style name="SplashTheme.Aero.Blue" parent="SplashTheme.Blue">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_aero_blue</item>
+    </style>
+    <style name="SplashTheme.Aero.Purple" parent="SplashTheme.Purple">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_aero_purple</item>
+    </style>
+    <style name="SplashTheme.Aero.Pink" parent="SplashTheme.Pink">
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_aero_pink</item>
+    </style>
+
+    <!--
+        98 takes the accent's place instead of taking the accent, so it keeps
+        one splash of its own — ground and ink both.
+    -->
+    <style name="SplashTheme.Ninety8" parent="Theme.Browser.Splash">
+        <item name="splashInk">@color/splash_ink_98</item>
+        <item name="android:windowSplashScreenBackground">@color/splash_bg_98</item>
+    </style>
+</resources>

@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Everything both variants share. Split out only so values-v31 can add
+         the splash-screen attributes without restating the rest; the manifest
+         still points at Theme.Browser. -->
+    <style name="BrowserBase" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <!-- Status/nav bar icon contrast is set at runtime instead (see
+             BrowserScreen's WindowCompat side effect) — it has to track the
+             app's resolved System/Light/Dark choice, not just this static
+             default, which only covers the first frame before that runs. -->
+        <!-- Pre-31 there is no splash screen API, so the window background IS
+             the splash. From 31 the system splash covers it (see
+             values-v31), and this is just what's behind the app. -->
+        <item name="android:windowBackground">@drawable/splash_window</item>
+        <!-- The splash kaomoji's colour. This is only the FALLBACK — the
+             app's own neutral at every API level (values/colors.xml) — for
+             the launches no SplashTheme.* has been registered for: the first
+             one after install, and any where the platform has dropped the
+             registration. Every accent, Dynamic included, has its own
+             SplashTheme.* below, which is this same theme with the one
+             attribute swapped. -->
+        <item name="splashInk">@color/splash_ink</item>
+    </style>
+
+    <style name="Theme.Browser" parent="BrowserBase" />
+
+    <!--
+        The link-from-another-app overlay (CustomTabActivity). Theme.Browser
+        with one thing added: it slides up over the app that opened it and
+        back down when closed, rather than taking the platform's default
+        activity transition, which would move the caller too. Explicit
+        parent so it inherits the v31 variant's splash attributes, same
+        reason as the swatch themes below.
+    -->
+    <style name="Theme.Browser.CustomTab" parent="Theme.Browser">
+        <item name="android:windowAnimationStyle">@style/Animation.Browser.CustomTab</item>
+        <!-- Plain ground rather than the browser's own launch screen: this
+             window opens OVER somebody else's app, and a full launch
+             ceremony there reads as being yanked out of it. Pre-31 the window
+             background is all there is; from 31 the system splash covers it
+             and its icon is dropped instead (values-v31). -->
+        <item name="android:windowBackground">@color/splash_bg</item>
+    </style>
+
+    <style name="Animation.Browser.CustomTab" parent="@android:style/Animation.Activity">
+        <item name="android:activityOpenEnterAnimation">@anim/custom_tab_enter</item>
+        <item name="android:activityOpenExitAnimation">@anim/custom_tab_hold</item>
+        <item name="android:activityCloseEnterAnimation">@anim/custom_tab_hold</item>
+        <item name="android:activityCloseExitAnimation">@anim/custom_tab_exit</item>
+    </style>
+
+    <!--
+        One splash theme per accent. These are never the
+        Activity's theme — MainActivity passes the one matching the current
+        AccentTheme to SplashScreen.setSplashScreenTheme (API 31+), which is
+        the only way an app setting can reach a window the system draws before
+        the app has read any state of its own. Because of that they take
+        effect on the *next* launch, not this one.
+
+        Explicit parents rather than dot-notation implicit parenting, so they
+        inherit the v31 variant (with the splash attributes) where there is
+        one. That parent is Theme.Browser.Splash, not Theme.Browser: the two
+        differ in the splash GROUND, because a registered splash is the app's
+        own canvas under the accent's cat, and the fallback — which is what
+        Theme.Browser itself is — is plain white or black under a grey one.
+        See values-v31/themes.xml for both.
+    -->
+    <style name="Theme.Browser.Splash" parent="Theme.Browser" />
+
+    <style name="SplashTheme.Dynamic" parent="Theme.Browser.Splash">
+        <item name="splashInk">@color/splash_ink_dynamic</item>
+    </style>
+    <style name="SplashTheme.Graphite" parent="Theme.Browser.Splash">
+        <item name="splashInk">@color/splash_ink_graphite</item>
+    </style>
+    <style name="SplashTheme.Red" parent="Theme.Browser.Splash">
+        <item name="splashInk">@color/splash_ink_red</item>
+    </style>
+    <style name="SplashTheme.Orange" parent="Theme.Browser.Splash">
+        <item name="splashInk">@color/splash_ink_orange</item>
+    </style>
+    <style name="SplashTheme.Yellow" parent="Theme.Browser.Splash">
+        <item name="splashInk">@color/splash_ink_yellow</item>
+    </style>
+    <style name="SplashTheme.Green" parent="Theme.Browser.Splash">
+        <item name="splashInk">@color/splash_ink_green</item>
+    </style>
+    <style name="SplashTheme.Teal" parent="Theme.Browser.Splash">
+        <item name="splashInk">@color/splash_ink_teal</item>
+    </style>
+    <style name="SplashTheme.Blue" parent="Theme.Browser.Splash">
+        <item name="splashInk">@color/splash_ink_blue</item>
+    </style>
+    <style name="SplashTheme.Purple" parent="Theme.Browser.Splash">
+        <item name="splashInk">@color/splash_ink_purple</item>
+    </style>
+    <style name="SplashTheme.Pink" parent="Theme.Browser.Splash">
+        <item name="splashInk">@color/splash_ink_pink</item>
+    </style>
+
+    <!--
+        The three tintable special themes (SpecialTheme.Tui / .Nothing /
+        .Aero), crossed with the accent. They reach the splash by the same mechanism as a
+        swatch, but they change one more thing than a swatch does: a special
+        theme replaces the interface rather than recolouring it, so the ground
+        it hands off to is its own as well — see the values-v31 variant, which
+        is where the splash background attribute exists to be set.
+
+        The INK is the accent's, not the theme's: an accent tints TUI and
+        Nothing (ColorScheme.tintedWith, see CLAUDE.md), so the mark on the
+        launch screen has to be the colour the app is about to open in, not
+        the look's own out-of-the-box orange or yellow. That is the whole
+        reason these exist per accent rather than one apiece — hence the
+        empty bodies here: pre-31 the ground is the fixed window background
+        and cannot vary per theme, so all a special theme adds below API 31 is
+        nothing at all, and the swatch's own theme is already the answer.
+    -->
+    <style name="SplashTheme.Tui.Dynamic" parent="SplashTheme.Dynamic" />
+    <style name="SplashTheme.Tui.Graphite" parent="SplashTheme.Graphite" />
+    <style name="SplashTheme.Tui.Red" parent="SplashTheme.Red" />
+    <style name="SplashTheme.Tui.Orange" parent="SplashTheme.Orange" />
+    <style name="SplashTheme.Tui.Yellow" parent="SplashTheme.Yellow" />
+    <style name="SplashTheme.Tui.Green" parent="SplashTheme.Green" />
+    <style name="SplashTheme.Tui.Teal" parent="SplashTheme.Teal" />
+    <style name="SplashTheme.Tui.Blue" parent="SplashTheme.Blue" />
+    <style name="SplashTheme.Tui.Purple" parent="SplashTheme.Purple" />
+    <style name="SplashTheme.Tui.Pink" parent="SplashTheme.Pink" />
+    <style name="SplashTheme.Nothing.Dynamic" parent="SplashTheme.Dynamic" />
+    <style name="SplashTheme.Nothing.Graphite" parent="SplashTheme.Graphite" />
+    <style name="SplashTheme.Nothing.Red" parent="SplashTheme.Red" />
+    <style name="SplashTheme.Nothing.Orange" parent="SplashTheme.Orange" />
+    <style name="SplashTheme.Nothing.Yellow" parent="SplashTheme.Yellow" />
+    <style name="SplashTheme.Nothing.Green" parent="SplashTheme.Green" />
+    <style name="SplashTheme.Nothing.Teal" parent="SplashTheme.Teal" />
+    <style name="SplashTheme.Nothing.Blue" parent="SplashTheme.Blue" />
+    <style name="SplashTheme.Nothing.Purple" parent="SplashTheme.Purple" />
+    <style name="SplashTheme.Nothing.Pink" parent="SplashTheme.Pink" />
+    <style name="SplashTheme.Aero.Dynamic" parent="SplashTheme.Dynamic" />
+    <style name="SplashTheme.Aero.Graphite" parent="SplashTheme.Graphite" />
+    <style name="SplashTheme.Aero.Red" parent="SplashTheme.Red" />
+    <style name="SplashTheme.Aero.Orange" parent="SplashTheme.Orange" />
+    <style name="SplashTheme.Aero.Yellow" parent="SplashTheme.Yellow" />
+    <style name="SplashTheme.Aero.Green" parent="SplashTheme.Green" />
+    <style name="SplashTheme.Aero.Teal" parent="SplashTheme.Teal" />
+    <style name="SplashTheme.Aero.Blue" parent="SplashTheme.Blue" />
+    <style name="SplashTheme.Aero.Purple" parent="SplashTheme.Purple" />
+    <style name="SplashTheme.Aero.Pink" parent="SplashTheme.Pink" />
+
+    <!--
+        98 is the exception: it REPLACES the accent rather than taking it
+        (tapping a swatch while it is on drops back to SpecialTheme.Default),
+        so its splash is the one that doesn't vary with the swatch.
+    -->
+    <style name="SplashTheme.Ninety8" parent="Theme.Browser.Splash">
+        <item name="splashInk">@color/splash_ink_98</item>
+    </style>
+
+    <!-- Themes for the WebViews' context, NOT for anything the user sees.
+         WebView derives the `prefers-color-scheme` media query it reports to
+         pages from android:isLightTheme on its own context's theme, and from
+         nothing else — so a site's built-in dark theme can only be reached by
+         handing the WebView a context whose theme says the app is dark. That
+         is deliberately decoupled from Theme.Browser above, which is the
+         app's chrome: page dark mode is its own setting (PageDarkMode) and
+         has to be able to say "dark pages, light browser".
+
+         isLightTheme is API 29+; below that the attribute is simply ignored,
+         and page dark mode falls back to the injected filter alone. -->
+    <style name="Theme.Browser.PageLight" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:isLightTheme" tools:targetApi="29">true</item>
+    </style>
+
+    <style name="Theme.Browser.PageDark" parent="android:Theme.Material.NoActionBar">
+        <item name="android:isLightTheme" tools:targetApi="29">false</item>
+    </style>
+</resources>

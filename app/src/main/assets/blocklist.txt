@@ -1,0 +1,22 @@
+# One host per line. Comments and blank lines are ignored.
+# Replace this stub with a real list, e.g. StevenBlack's hosts file
+# (strip the leading "0.0.0.0 " from each line).
+doubleclick.net
+googlesyndication.com
+googletagservices.com
+googletagmanager.com
+google-analytics.com
+adservice.google.com
+scorecardresearch.com
+quantserve.com
+outbrain.com
+taboola.com
+criteo.com
+adnxs.com
+rubiconproject.com
+pubmatic.com
+casalemedia.com
+openx.net
+moatads.com
+amazon-adsystem.com
+facebook.net

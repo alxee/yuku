@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The face, tinted rather than baked in two colours: the PNG is solid black
+    on transparent, so its alpha is the shape and @color/ic_launcher_ink is
+    the only thing that has to change between light and dark.
+
+    gravity="fill" (the default, stated here because it matters) scales the
+    source to the layer's bounds — a launcher may rasterise the icon larger
+    than the 1024px source, and a centered bitmap would sit there at its
+    intrinsic size and come out small.
+-->
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:src="@drawable/ic_launcher_cat"
+    android:tint="@color/ic_launcher_ink"
+    android:gravity="fill" />

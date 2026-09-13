@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    An adaptive icon's FOREGROUND layer: 108dp of which only the inner 72
+    survives the launcher's mask, and less again once it shrinks the layer to
+    make room for its own shape. The 24dp Material glyph is therefore scaled
+    to 50dp and centred by hand rather than drawn edge to edge — a group
+    transform, since a vector has no gravity.
+
+    Tinted @color/ic_launcher_ink, which is black under values/colors.xml and
+    white under values-night: the launcher draws this in its own process and
+    its own configuration, so it follows the SYSTEM light/dark setting and
+    cannot be asked what the browser's own ThemeMode is.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108"
+    android:tint="@color/ic_launcher_ink">
+    <group
+        android:translateX="29"
+        android:translateY="29"
+        android:scaleX="2.0833"
+        android:scaleY="2.0833">
+        <path
+            android:fillColor="#FF000000"
+            android:pathData="M19,13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+    </group>
+</vector>

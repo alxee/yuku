@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The password vault is encrypted under a key that lives in the AndroidKeyStore
+  and is not itself backed up, so a vault restored onto another device (or
+  after a reinstall) could never be decrypted. Excluding it means a restore
+  comes back with no saved passwords rather than with a file the app has to
+  throw away — and it keeps the ciphertext out of the backup transport.
+-->
+<full-backup-content>
+    <exclude domain="file" path="passwords/" />
+</full-backup-content>

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    The pre-31 splash: below API 31 there is no system splash screen at all,
+    only the window background, so this is what fills the screen while the
+    process starts. Static by necessity — a windowBackground is never started,
+    so the cats only cycle where there's a real splash screen to hold.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/splash_bg" />
+    <!-- The same grain the app's own canvases carry (ui/Grain.kt), so the
+         launch surface and the first screen are the same material rather than
+         a flat field handing over to a textured one. Baked, tiled 1:1 (hence
+         drawable-nodpi — a density-scaled noise tile is no longer noise), and
+         under the cat rather than over it.
+
+         This layer only reaches the splash below API 31. From 31 the system
+         splash ignores windowBackground entirely and its own background is
+         `android:windowSplashScreenBackground`, which takes a COLOR and not a
+         drawable — there is no way to put a texture behind that icon. -->
+    <item>
+        <bitmap
+            android:src="@drawable/grain_tile"
+            android:tileModeX="repeat"
+            android:tileModeY="repeat" />
+    </item>
+    <item>
+        <bitmap
+            android:src="@drawable/splash_cat_0"
+            android:tint="?attr/splashInk"
+            android:gravity="center" />
+    </item>
+</layer-list>
