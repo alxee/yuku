@@ -12,6 +12,9 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.yuku.browser.ui.theme.accentWash
 import com.yuku.browser.ui.theme.EmptyBg
@@ -105,15 +108,33 @@ private fun Modifier.clearing(ground: Color): Modifier {
 @Composable
 fun EmptyState(
     private: Boolean = false,
+    // This composable is hosted inside the Scaffold's top padding. Grow its
+    // canvas back through that inset so the system status bar is transparent
+    // over the very same surface, then pad only the watermark back down.
+    topInset: Dp = 0.dp,
     // How much of the bottom the toolbar covers. The GROUND runs to the
     // screen's edge under it — a translucent bar (Aero) shows whatever is
     // behind it, and a ground that stopped at the bar's top left a band of
     // page colour there — while the watermark stays centred in the space
     // above the bar, where it always was.
-    bottomInset: androidx.compose.ui.unit.Dp = androidx.compose.ui.unit.Dp(0f),
+    bottomInset: Dp = 0.dp,
 ) {
-    Box(modifier = Modifier.fillMaxSize().grainedBackground(EmptyBg, dotSpacing = EMPTY_DOT_SPACING)) {
-        Box(Modifier.fillMaxSize().padding(bottom = bottomInset).tuiBloomIf()) {
+    val topInsetPx = with(LocalDensity.current) { topInset.roundToPx() }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .layout { measurable, constraints ->
+                val height = constraints.maxHeight + topInsetPx
+                val placeable = measurable.measure(
+                    constraints.copy(minHeight = height, maxHeight = height),
+                )
+                layout(constraints.maxWidth, constraints.maxHeight) {
+                    placeable.place(0, -topInsetPx)
+                }
+            }
+            .grainedBackground(EmptyBg, dotSpacing = EMPTY_DOT_SPACING),
+    ) {
+        Box(Modifier.fillMaxSize().padding(top = topInset, bottom = bottomInset).tuiBloomIf()) {
             Watermark(private = private)
         }
     }

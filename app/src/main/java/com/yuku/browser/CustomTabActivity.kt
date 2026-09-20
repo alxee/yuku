@@ -64,7 +64,9 @@ class CustomTabActivity : ComponentActivity(), ActionModeOwner {
     }
 
     /** The intent this overlay was opened for — null once it has been consumed. */
-    private var request: CustomTabRequest? = null
+    // Snapshot state, so a link arriving through onNewIntent reaches the
+    // screen too: its menu items and session token belong to the new caller.
+    private var request: CustomTabRequest? by mutableStateOf(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -105,7 +107,7 @@ class CustomTabActivity : ComponentActivity(), ActionModeOwner {
             BrowserTheme(accent = accent, themeMode = themeMode, special = special) {
                 CustomTabScreen(
                     vm = vm,
-                    request = opened,
+                    request = request ?: opened,
                     onClose = { finish() },
                     onOpenInBrowser = ::openInBrowser,
                 )

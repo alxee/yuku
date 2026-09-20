@@ -417,10 +417,11 @@ internal fun ListScreenScaffold(
         }
         // Under Aero the field is the omnibox's 56dp bar, so its strip is taller.
         val headerHeight = if (aero) LIST_SEARCH_HEADER_HEIGHT_AERO else LIST_SEARCH_HEADER_HEIGHT
+        val scroll = rememberScrollState()
         val scrollModifier = Modifier
             .fillMaxSize()
             .then(contentModifier)
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scroll)
             .navigationBarsPadding()
         if (headerOverContent && header != null) {
             Box(Modifier.fillMaxSize()) {
@@ -436,10 +437,13 @@ internal fun ListScreenScaffold(
                     .drawWithContent {
                         drawContent()
                         val headerPx = headerHeight.toPx()
-                        val fadePx = HISTORY_SEARCH_FADE.toPx()
                         // Gone under the top half of the field, then receding
-                        // continuously through its lower half and the band
-                        // below it — never a hard crop at one line.
+                        // through its lower half and a NARROW band below it.
+                        // The band grows in with the scroll: at the top the
+                        // first row starts at the field's bottom edge, and a
+                        // fade over it there faded content nothing is under.
+                        val fadePx = HISTORY_SEARCH_FADE.toPx() *
+                            (scroll.value / HISTORY_SEARCH_FADE.toPx()).coerceIn(0f, 1f)
                         drawRect(
                             brush = Brush.verticalGradient(
                                 0f to Color.Black,
@@ -476,7 +480,7 @@ internal fun ListScreenScaffold(
 
 private val LIST_SEARCH_HEADER_HEIGHT = 52.dp
 private val LIST_SEARCH_HEADER_HEIGHT_AERO = 64.dp
-private val HISTORY_SEARCH_FADE = 52.dp
+private val HISTORY_SEARCH_FADE = 16.dp
 
 @Composable
 private fun EntryRow(

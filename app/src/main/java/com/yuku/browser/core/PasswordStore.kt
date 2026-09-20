@@ -11,7 +11,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.security.KeyStore
+import java.security.KeyStoreException
 import java.util.concurrent.Executors
+import javax.crypto.AEADBadTagException
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -66,6 +68,10 @@ class PasswordStore(app: Application) {
 
     private val dir = File(app.filesDir, "passwords")
     private val file = File(dir, "vault.bin")
+    private val unreadable = File(dir, "vault.unreadable.bin")
+
+    /** The vault could not be read this session, but may be next: never write over it. */
+    @Volatile private var readFailed = false
     private val io = Executors.newSingleThreadExecutor()
 
     private val _entries = MutableStateFlow<List<SavedPassword>>(emptyList())
@@ -218,6 +224,7 @@ class PasswordStore(app: Application) {
     // ----------------------------------------------------------- the file
 
     private fun persist() {
+        if (readFailed) return
         val json = serialize().toString()
         io.execute {
             runCatching {
@@ -234,12 +241,29 @@ class PasswordStore(app: Application) {
     }
 
     private fun load() {
-        val raw = runCatching { if (file.isFile) file.readBytes() else null }.getOrNull() ?: return
-        val plain = runCatching { decrypt(raw) }.getOrNull()
-        if (plain == null) {
-            // Unreadable: a restored backup, a reinstall, a keystore reset.
-            // There is nothing behind this file any more, so it goes.
-            runCatching { file.delete() }
+        val raw = try {
+            if (file.isFile) file.readBytes() else return
+        } catch (e: Exception) {
+            readFailed = true
+            return
+        }
+        val plain = try {
+            decrypt(raw)
+        } catch (e: Exception) {
+            if (e is AEADBadTagException || e is IllegalArgumentException || e is KeyGoneException) {
+                // Unreadable for good: a restored backup, a reinstall, a
+                // keystore reset. Moved aside rather than deleted — a wrong
+                // verdict here must not be the end of every saved login.
+                runCatching {
+                    unreadable.delete()
+                    file.renameTo(unreadable)
+                }
+            } else {
+                // Anything else (a keystore that is busy, a provider hiccup)
+                // may well read fine next launch. Leave the file alone, and
+                // don't let this session's empty vault be written over it.
+                readFailed = true
+            }
             return
         }
         runCatching {
@@ -339,7 +363,7 @@ class PasswordStore(app: Application) {
 
     private fun encrypt(plain: ByteArray): ByteArray {
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.ENCRYPT_MODE, key())
+        cipher.init(Cipher.ENCRYPT_MODE, key(create = true))
         val iv = cipher.iv
         val body = cipher.doFinal(plain)
         return ByteArray(1 + iv.size + body.size).also { out ->
@@ -355,14 +379,28 @@ class PasswordStore(app: Application) {
         val iv = sealed.copyOfRange(1, 1 + IV_BYTES)
         val body = sealed.copyOfRange(1 + IV_BYTES, sealed.size)
         val cipher = Cipher.getInstance(TRANSFORMATION)
-        cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(TAG_BITS, iv))
+        cipher.init(Cipher.DECRYPT_MODE, key(create = false), GCMParameterSpec(TAG_BITS, iv))
         return cipher.doFinal(body)
     }
 
-    /** The vault key, created on first use and never leaving the keystore. */
-    private fun key(): SecretKey {
+    /** The key is not in the keystore at all — whatever it sealed is gone with it. */
+    private class KeyGoneException : Exception()
+
+    /**
+     * The vault key, created on first use and never leaving the keystore.
+     *
+     * Generated ONLY when the alias is absent: generating under an alias that
+     * exists replaces the key, so an entry that merely failed to read this
+     * once must throw rather than fall through to a new one. Decrypting never
+     * creates — a new key cannot open an old vault.
+     */
+    private fun key(create: Boolean): SecretKey {
         val store = KeyStore.getInstance(KEYSTORE).apply { load(null) }
-        (store.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
+        if (store.containsAlias(KEY_ALIAS)) {
+            return (store.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.secretKey
+                ?: throw KeyStoreException("vault key entry unreadable")
+        }
+        if (!create) throw KeyGoneException()
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE)
         generator.init(
             KeyGenParameterSpec.Builder(

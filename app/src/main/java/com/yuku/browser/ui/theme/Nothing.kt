@@ -10,6 +10,8 @@ import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.core.graphics.ColorUtils
 import androidx.compose.ui.text.ExperimentalTextApi
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -368,6 +370,48 @@ internal val NothingDarkScheme: ColorScheme = darkColorScheme(
  * it, so the ink steps in from the grey ramp instead and the lines stay
  * where they are.
  */
+/**
+ * A Nothing grey carried onto the seed's hue at the ordinary theme's
+ * saturation for that role, keeping its own lightness — so contrast holds and
+ * the accent tints it exactly as `tonalColorScheme` tints the default look's.
+ * A neutral seed (Graphite, a grey wallpaper) leaves it grey.
+ */
+internal fun nothingTint(grey: Color, seed: Color, saturationScale: Float): Color {
+    val g = FloatArray(3)
+    val s = FloatArray(3)
+    ColorUtils.colorToHSL(grey.toArgb(), g)
+    ColorUtils.colorToHSL(seed.toArgb(), s)
+    g[0] = s[0]
+    g[1] = (s[1] * saturationScale).coerceIn(0f, 1f)
+    return Color(ColorUtils.HSLToColor(g)).copy(alpha = grey.alpha)
+}
+
+/**
+ * The colour rule that separates Nothing from the default look: the CANVAS
+ * (page, sheets, toolbar and raised containers) stays pure white/black.
+ * Accent belongs on marks — outlines, rules, inks and enabled controls —
+ * rather than as a wash across a bar or button face. The saturation scales
+ * are `tonalColorScheme`'s, role for role.
+ */
+internal fun ColorScheme.nothingElementsTinted(seed: Color): ColorScheme = copy(
+    primaryContainer = nothingTint(primaryContainer, seed, 1f),
+    onPrimaryContainer = nothingTint(onPrimaryContainer, seed, 1f),
+    secondary = nothingTint(secondary, seed, 0.35f),
+    secondaryContainer = nothingTint(secondaryContainer, seed, 0.35f),
+    onSecondaryContainer = nothingTint(onSecondaryContainer, seed, 0.35f),
+    tertiary = nothingTint(tertiary, seed, 0.35f),
+    tertiaryContainer = nothingTint(tertiaryContainer, seed, 0.35f),
+    onTertiaryContainer = nothingTint(onTertiaryContainer, seed, 0.35f),
+    onBackground = nothingTint(onBackground, seed, 0.14f),
+    onSurface = nothingTint(onSurface, seed, 0.14f),
+    surfaceVariant = nothingTint(surfaceVariant, seed, 0.35f),
+    onSurfaceVariant = nothingTint(onSurfaceVariant, seed, 0.2f),
+    // Raised surfaces are the bars and button faces.  Keep those neutral so
+    // the accent is a precise outline rather than a wash across the chrome.
+    outline = nothingTint(outline, seed, 0.2f),
+    outlineVariant = nothingTint(outlineVariant, seed, 0.2f),
+)
+
 internal val NothingInkMutedLight = Dot.inkQuiet
 internal val NothingInkMutedDark = Dot.glowQuiet
 internal val NothingInkFaintLight = Dot.inkFaint

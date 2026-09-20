@@ -145,6 +145,9 @@ object PageBottomBar {
     /** Above this fraction of the viewport it's an overlay, not a bar. */
     private const val MAX_HEIGHT_FRACTION = 0.35
 
+    /** A broad side drawer is not a bottom panel — see PageTopInset. */
+    private const val PANEL_WIDTH_FRACTION = 0.95
+
     /** Shortest thing worth reserving space for, in CSS px. */
     private const val MIN_HEIGHT_PX = 12
 
@@ -167,6 +170,15 @@ object PageBottomBar {
      * moving, since below it is a chip rather than a bar.
      */
     private const val PROBE_STEP_PX = 24
+
+    /**
+     * How far above the bottom edge a bar may rest and still be found while
+     * NOTHING covers that edge (inset 0 — the toolbar away). Only the edge
+     * line was probed then, so a bar the site holds off it by a margin
+     * (duckduckgo.com's toast, `bottom: 15px`) was never reported, never got
+     * the navigation-bar floor, and sat on the gesture pill.
+     */
+    private const val EDGE_BAND_PX = 24
 
     /**
      * How far a box's top may sit below the viewport's own, and how far its
@@ -205,8 +217,14 @@ object PageBottomBar {
      * feature is missing there is simply no detection and no inset: the page
      * then behaves exactly as it did before this existed.
      */
-    fun attach(web: WebView, insetPx: () -> Int, fillPx: () -> Int, onChanged: (Int) -> Unit) {
-        web.addJavascriptInterface(Bridge(insetPx, fillPx, onChanged), BRIDGE_NAME)
+    fun attach(
+        web: WebView,
+        insetPx: () -> Int,
+        fillPx: () -> Int,
+        endPx: () -> Int = { 0 },
+        onChanged: (Int) -> Unit,
+    ) {
+        web.addJavascriptInterface(Bridge(insetPx, fillPx, endPx, onChanged), BRIDGE_NAME)
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             WebViewCompat.addDocumentStartJavaScript(web, SCRIPT, setOf("*"))
         }
@@ -220,9 +238,9 @@ object PageBottomBar {
      * Call on every change: a document that hasn't started yet reads the same
      * value through the bridge instead, so the two paths can't disagree.
      */
-    fun setInset(web: WebView, px: Int) {
+    fun setInset(web: WebView, px: Int, endPx: Int = 0) {
         web.evaluateJavascript(
-            "window.__bottomBarInset && window.__bottomBarInset($px)",
+            "window.__bottomBarInset && window.__bottomBarInset($px, $endPx)",
             null,
         )
     }
@@ -241,9 +259,18 @@ object PageBottomBar {
     class Bridge internal constructor(
         private val insetPx: () -> Int,
         private val fillPx: () -> Int,
+        private val endPx: () -> Int,
         private val onChanged: (Int) -> Unit,
     ) {
         private val main = Handler(Looper.getMainLooper())
+
+        /**
+         * Device pixels of room the document's END needs while nothing of
+         * ours covers the edge but the page still runs under the navigation
+         * bar; see the body padding in the script.
+         */
+        @JavascriptInterface
+        fun end(): Int = endPx()
 
         /** Device pixels of spacing painted below a moved bar; see [setFill]. */
         @JavascriptInterface
@@ -304,6 +331,8 @@ object PageBottomBar {
           // shifted by. They differ for one reason only — see applyInset.
           var appInset = 0;
           var inset = 0;
+          // CSS px of room the document's end gets while the inset is 0.
+          var endPad = 0;
           // The elements moved out from under it, each with the margin the
           // site itself asked for so it can be given back exactly.
           var shifted = [];
@@ -318,6 +347,8 @@ object PageBottomBar {
           // the max-height the site itself asked for so it can be given back
           // exactly, and the top it was capped against.
           var capped = [];
+          // Boxes a cap was found to clip — see applyShellCaps.
+          var notShells = new WeakSet();
 
           // CSS px of spacing painted between a moved bar and the bottom
           // edge, in the bar's own background colour, or 0 — see writeFill.
@@ -389,7 +420,7 @@ object PageBottomBar {
             // has already been shifted up off it. A bar that has been slid off
             // screen (the site's own hide-on-scroll) or one still up the page
             // is not occupying either.
-            if (r.bottom < vh - inset - (lift || 0) - $BOTTOM_SLACK_PX ||
+            if (r.bottom < vh - Math.max(inset, $EDGE_BAND_PX) - (lift || 0) - $BOTTOM_SLACK_PX ||
                 r.top >= vh) return 0;
             // What it puts ON SCREEN, not how tall the box is: a bottom sheet
             // is a tall box hanging most of the way off the bottom of the
@@ -433,6 +464,16 @@ object PageBottomBar {
               if (h > 0){
                 if (h <= vh * $MAX_HEIGHT_FRACTION){ bar = node; barH = h; }
                 else {
+                  // A side drawer may cover most of a phone's width, but it
+                  // owns its vertical entrance animation. Moving or capping it
+                  // here fights that animation; only a near-full-width overlay
+                  // needs clearance from browser chrome.
+                  var panelRect = node.getBoundingClientRect();
+                  if (panelRect.width < vw * $PANEL_WIDTH_FRACTION){
+                    node = node.parentElement ||
+                      (node.getRootNode && node.getRootNode().host) || null;
+                    continue;
+                  }
                   // EVERY panel in the chain, not just the outermost, for the
                   // same reason the shells are all capped: a box sized by its
                   // own `top` and `bottom` takes no height from its parent, so
@@ -493,7 +534,8 @@ object PageBottomBar {
             var pad = topPad();
             for (var d = 0; node && d < 20; d++){
               if (node.nodeType === 1 && node !== document.body &&
-                  node !== document.documentElement && into.indexOf(node) < 0){
+                  node !== document.documentElement && into.indexOf(node) < 0 &&
+                  !notShells.has(node)){
                 var r = node.getBoundingClientRect();
                 if (r.top <= pad + $SHELL_SLACK_PX && r.height >= vh - $SHELL_SLACK_PX) {
                   into.push(node);
@@ -531,15 +573,16 @@ object PageBottomBar {
               // found only while it was sliding IN, which is the frames it
               // happens to cross the bottom edge in, so whether it was lifted
               // at all came down to where the throttle landed.
+              // With nothing covering the edge the band is EDGE_BAND_PX, so a
+              // bar held just off it is still found and reported.
+              var span = Math.max(inset, $EDGE_BAND_PX);
               var ys = [vh - 2];
-              if (inset > 0){
-                for (var yg = vh - 2 - $PROBE_STEP_PX;
-                     yg > vh - inset - 2 && ys.length < 8;
-                     yg -= $PROBE_STEP_PX){
-                  ys.push(yg);
-                }
-                ys.push(vh - inset - 2);
+              for (var yg = vh - 2 - $PROBE_STEP_PX;
+                   yg > vh - span - 2 && ys.length < 8;
+                   yg -= $PROBE_STEP_PX){
+                ys.push(yg);
               }
+              ys.push(vh - span - 2);
               for (var yi = 0; yi < ys.length; yi++){
                 if (ys[yi] < 0) continue;
                 for (var i = 0; i < xs.length; i++){
@@ -827,6 +870,45 @@ object PageBottomBar {
             }
             var want = Math.round(r.height + (r.top - top) - extra);
             if (!(want >= $MIN_SHELL_HEIGHT_PX)) return;
+            // Only ever to bring a top that went ABOVE its line back down —
+            // never to grow a box whose top is already at or below it. A
+            // panel's top is PageTopInset's to hold too, from the other end:
+            // auto.ria.com's brand sheet is centred by `margin: auto`, top0 was
+            // read before the status bar inset moved it, and growing it back
+            // to top0 lifted it under the bar, which PageTopInset shortened
+            // again — the sheet jumped 23px each way every 250ms.
+            if (r.top >= top - 0.5 && want > r.height - extra) return;
+            if (!rec.cap) rec.cap = ownValue(rec, { prop: 'max-height' });
+            var css = want + 'px';
+            if (el.style.getPropertyValue('max-height') !== css){
+              try { el.style.setProperty('max-height', css, 'important'); } catch (e) {}
+            }
+          }
+
+          // Holds [rec]'s element's BOTTOM edge on the inset's line by capping
+          // its height — capTo's twin for a panel no offset moves. Relative to
+          // where the box is now, so a cap already on it corrects itself.
+          function capBottom(rec){
+            var el = rec.el;
+            var r = el.getBoundingClientRect();
+            var s = window.getComputedStyle(el);
+            var extra = 0;
+            if (s.boxSizing !== 'border-box'){
+              extra = (parseFloat(s.paddingTop) || 0) + (parseFloat(s.paddingBottom) || 0) +
+                (parseFloat(s.borderTopWidth) || 0) + (parseFloat(s.borderBottomWidth) || 0);
+            }
+            // The VIEWPORT's line, not where the box was first seen: a panel
+            // is only ever taken for resting on the bottom edge, and the
+            // first sighting can be mid-entrance — duckduckgo.com's viewer,
+            // first opened after a reload, read 23px short of the edge and
+            // was capped that far above the toolbar, page showing between.
+            // A max-height only ever shortens, so a panel that ends higher
+            // on its own is untouched.
+            var line = (window.innerHeight || 0) - inset;
+            // Up: a fraction short of the line shows page between the panel
+            // and the toolbar; a fraction past it is under the toolbar.
+            var want = Math.ceil(r.height - (r.bottom - line) - extra);
+            if (!(want >= $MIN_SHELL_HEIGHT_PX)) return;
             if (!rec.cap) rec.cap = ownValue(rec, { prop: 'max-height' });
             var css = want + 'px';
             if (el.style.getPropertyValue('max-height') !== css){
@@ -911,6 +993,19 @@ object PageBottomBar {
               rec.recheck = true;
               return;
             }
+            // A PANEL whose bottom did not move is shortened, not given a
+            // margin: duckduckgo.com's image viewer is a fixed box with a
+            // height of its own under a `top` PageTopInset moved, so `bottom`
+            // is over-constrained away and `margin-bottom` moves nothing
+            // either — the caption under a tall image stayed under the
+            // toolbar. Its height is capped so its bottom lands on the inset.
+            if (rec.panel && rec.bottom0 - r.bottom < 1){
+              restore(rec);
+              rec.levers = [];
+              rec.capBottom = true;
+              capBottom(rec);
+              return;
+            }
             if (rec.bottom0 - r.bottom < 1 && rec.levers[0].prop !== 'margin-bottom'){
               restore(rec);
               var m = parseFloat(window.getComputedStyle(el).marginBottom);
@@ -982,7 +1077,7 @@ object PageBottomBar {
                 rec.settleBy = Date.now() + settleMs(el, levers[0].prop);
                 shifted.push(rec);
                 fresh.push(rec);
-              } else if (rec.cap) {
+              } else if (rec.cap || rec.capBottom) {
                 // A cap holds a box against an inset, so a change of inset
                 // leaves it holding the wrong line — and the box has slid
                 // again by the time this runs, which is what capTo measures.
@@ -998,7 +1093,8 @@ object PageBottomBar {
               writeFill(shifted[n]);
             }
             for (var c = 0; c < fresh.length; c++){
-              if (fresh[c].cap) capTo(fresh[c], fresh[c].top0);
+              if (fresh[c].capBottom) capBottom(fresh[c]);
+              else if (fresh[c].cap) capTo(fresh[c], fresh[c].top0);
               else correct(fresh[c]);
             }
           }
@@ -1017,7 +1113,21 @@ object PageBottomBar {
             var on = inset > 0 && !docScrolls();
             for (var i = capped.length - 1; i >= 0; i--){
               var rec = capped[i];
-              if (on && rec.el.isConnected) continue;
+              // A cap that CLIPS its box's content was never on a shell: the
+              // box only measured viewport-tall while the page was still
+              // short. duckduckgo.com's image results sit in a
+              // `min-height: 100vh; overflow: hidden` wrapper that grows with
+              // the grid; capped during load, it clipped every row after the
+              // first screen, which kept the document from scrolling, which
+              // kept the cap — the last captions under the toolbar for good.
+              // A real shell lays itself out inside the cap. Rejected for the
+              // document's life, so it cannot be found and capped again.
+              var clips = false;
+              if (on && rec.el.isConnected){
+                try { clips = rec.el.scrollHeight > rec.el.clientHeight + $SHELL_SLACK_PX; } catch (e) {}
+                if (clips) notShells.add(rec.el);
+              }
+              if (on && rec.el.isConnected && !clips) continue;
               try {
                 if (rec.inline) rec.el.style.setProperty('max-height', rec.inline, rec.priority);
                 else rec.el.style.removeProperty('max-height');
@@ -1073,7 +1183,11 @@ object PageBottomBar {
           function applyBodyPad(){
             var b = document.body;
             if (!b) return;
-            var want = inset > 0 ? inset : 0;
+            // With the toolbar away and no floor, the page runs under the
+            // navigation bar and its end rested under the gesture pill
+            // (duckduckgo.com's last row of image captions): the app's end
+            // room stands in for the inset then.
+            var want = inset > 0 ? inset : (fullscreenElement() ? 0 : endPad);
             if (want === bodyPad) return;
             if (!bodyPad){
               bodyPadInline = b.style.getPropertyValue('padding-bottom');
@@ -1151,7 +1265,29 @@ object PageBottomBar {
             if (settling > 0 && settling <= $SETTLING_FRAMES) schedule();
           }
 
-          function schedule(){
+          // Called by the MutationObserver (with its records) — see
+          // PageTopInset's schedule for why a change the observer saw is
+          // answered inside its own microtask, before the frame is painted,
+          // and why that is bounded per burst.
+          var nowRuns = 0, nowFrameQueued = false, nowSecStart = 0, nowSecRuns = 0;
+          function runNowAllowed(){
+            var t = Date.now();
+            if (t - nowSecStart > 1000){ nowSecStart = t; nowSecRuns = 0; }
+            if (nowRuns >= 4 || nowSecRuns >= 24) return false;
+            nowRuns++; nowSecRuns++;
+            if (!nowFrameQueued && window.requestAnimationFrame){
+              nowFrameQueued = true;
+              requestAnimationFrame(function(){ nowFrameQueued = false; nowRuns = 0; });
+            }
+            return true;
+          }
+          function schedule(records){
+            // Whatever is pending (see PageTopInset's schedule): a queued
+            // run still happens and only finds nothing left to write.
+            if (Array.isArray(records) && runNowAllowed()){
+              try { report(); } catch (e) {}
+              return;
+            }
             if (pending) return;
             pending = true;
             var fast = settling > 0 && settling <= $SETTLING_FRAMES;
@@ -1169,9 +1305,12 @@ object PageBottomBar {
           // being rendered at. Applied straight through rather than scheduled:
           // this one is the toolbar moving under the user's finger, not the
           // page changing under us.
-          window.__bottomBarInset = function(px){
+          window.__bottomBarInset = function(px, endPx){
             appInset = (px || 0) / (window.devicePixelRatio || 1);
+            endPad = (endPx || 0) / (window.devicePixelRatio || 1);
             applyInset();
+            // applyInset returns early when only the end room changed.
+            applyBodyPad();
           };
 
           // Nothing of ours is over a page in fullscreen. The toolbar is not
@@ -1223,7 +1362,12 @@ object PageBottomBar {
             // hide-on-scroll, a rotation, a sheet opening, a late hydration.
             var opts = { passive: true, capture: true };
             window.addEventListener('scroll', schedule, opts);
-            window.addEventListener('resize', schedule, opts);
+            // Answered NOW, like an observed change: `resize` is dispatched in
+            // the frame's own rendering steps, so a measurement inside it
+            // lands in the first frame painted at the new size (the keyboard
+            // coming up is a resize, and a throttled answer showed a centred
+            // sheet at the old cap for a frame, then at its own size).
+            window.addEventListener('resize', function(){ schedule([]); }, opts);
             window.addEventListener('orientationchange', schedule, opts);
             window.addEventListener('transitionend', schedule, opts);
             // Both ways: entering gives back every shift before the fullscreen
@@ -1249,7 +1393,7 @@ object PageBottomBar {
           // document asks for it rather than waiting to be told — otherwise
           // every navigation would land a page under the toolbar until the
           // next push.
-          try { window.__bottomBarInset(window.$BRIDGE_NAME.inset()); } catch (e) {}
+          try { window.__bottomBarInset(window.$BRIDGE_NAME.inset(), window.$BRIDGE_NAME.end()); } catch (e) {}
 
           schedule();
           // A bar that arrives with late CSS, a framework's first paint, or a

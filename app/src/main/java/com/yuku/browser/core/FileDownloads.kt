@@ -13,9 +13,9 @@ import android.webkit.MimeTypeMap
 import android.webkit.URLUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
-import java.net.URLDecoder
 
 /**
  * What happens when a page hands the browser a file instead of a page — the
@@ -176,7 +176,9 @@ object FileDownloads {
                 val dir = Environment
                     .getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                 dir.mkdirs()
-                val file = File(dir, name)
+                // Never over a file already there — DownloadManager and
+                // MediaStore both pick a fresh name, and so does this.
+                val file = uniqueFile(dir, name)
                 file.writeBytes(bytes)
                 MediaScannerConnection.scanFile(
                     context,
@@ -204,11 +206,53 @@ object FileDownloads {
                 Base64.decode(payload, Base64.URL_SAFE)
             }
         } else {
-            URLDecoder.decode(payload, "UTF-8").toByteArray()
+            percentDecode(payload)
         }
         if (bytes.isEmpty()) throw IOException("Malformed file data")
         val mime = meta.substringBefore(';').trim().takeIf { it.isNotBlank() }
         return bytes to (mime ?: "application/octet-stream")
+    }
+
+    /**
+     * A data: URI's percent-encoding, decoded straight to BYTES. Not
+     * [java.net.URLDecoder], which is for form bodies: it turns a literal `+`
+     * into a space, and going through a String mangles any byte that is not
+     * valid UTF-8 (`%FF`).
+     */
+    private fun percentDecode(payload: String): ByteArray {
+        val input = payload.toByteArray(Charsets.UTF_8)
+        val out = ByteArrayOutputStream(input.size)
+        var i = 0
+        while (i < input.size) {
+            val b = input[i]
+            if (b == '%'.code.toByte() && i + 2 < input.size) {
+                val hi = Character.digit(input[i + 1].toInt().toChar(), 16)
+                val lo = Character.digit(input[i + 2].toInt().toChar(), 16)
+                if (hi >= 0 && lo >= 0) {
+                    out.write((hi shl 4) or lo)
+                    i += 3
+                    continue
+                }
+            }
+            out.write(b.toInt())
+            i++
+        }
+        return out.toByteArray()
+    }
+
+    /** `name`, or `name (1).ext`, `name (2).ext`… — whichever doesn't exist yet. */
+    private fun uniqueFile(dir: File, name: String): File {
+        val first = File(dir, name)
+        if (!first.exists()) return first
+        val dot = name.lastIndexOf('.')
+        val base = if (dot > 0) name.substring(0, dot) else name
+        val ext = if (dot > 0) name.substring(dot) else ""
+        var n = 1
+        while (true) {
+            val candidate = File(dir, "$base ($n)$ext")
+            if (!candidate.exists()) return candidate
+            n++
+        }
     }
 
     /** The extension for a mime type, for callers naming a file themselves. */

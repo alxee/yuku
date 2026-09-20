@@ -229,6 +229,7 @@ private fun SiteTextSizeRow(zoom: Int, onSetStep: (Int) -> Unit) {
             },
             valueRange = 0f..ZOOM_STEPS.lastIndex.toFloat(),
             steps = ZOOM_STEPS.size - 2,
+            colors = frostedSliderColors(),
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 16.dp),

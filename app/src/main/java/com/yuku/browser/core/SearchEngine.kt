@@ -24,8 +24,15 @@ data class SearchEngine(
     /** True for anything the user added themselves — the deletable ones. */
     val isCustom: Boolean get() = id.startsWith(CUSTOM_PREFIX)
 
-    fun searchUrl(query: String): String =
-        template.replace(PLACEHOLDER, URLEncoder.encode(query, "UTF-8"))
+    fun searchUrl(query: String): String {
+        // Form encoding (space as `+`) is only right in the query string; in
+        // a PATH a `+` is a literal plus, so there it is percent-encoded.
+        val at = template.indexOf(PLACEHOLDER)
+        val question = template.indexOf('?')
+        val inQuery = question in 0 until at
+        val encoded = if (inQuery) URLEncoder.encode(query, "UTF-8") else Uri.encode(query)
+        return template.replace(PLACEHOLDER, encoded)
+    }
 
     /**
      * Whether [url] is one of this engine's result pages: the template's host

@@ -23,8 +23,7 @@ import com.yuku.browser.ui.theme.Ink
 import com.yuku.browser.ui.theme.LocalAero
 import com.yuku.browser.ui.theme.LocalChromeDarkness
 import com.yuku.browser.ui.theme.LocalTui
-import com.yuku.browser.ui.theme.crt
-import androidx.compose.material3.MaterialTheme
+import com.yuku.browser.ui.theme.tuiSurfaceTextureIf
 import com.yuku.browser.ui.theme.LocalNinety8
 import com.yuku.browser.ui.theme.LocalNothing
 import com.yuku.browser.ui.theme.AERO_MATTE
@@ -123,18 +122,10 @@ fun Modifier.grainedBackground(
 ): Modifier = when {
     LocalNothing.current -> this.background(color).dotField(Ink, strength, spacing = dotSpacing)
     LocalNinety8.current -> this.background(color)
-    // A tube's raster, drawn UNDER the content: one of these surfaces is the
-    // box the live WebView sits in, and scanlines over it would dim the page.
-    // The empty canvases (the wider dot spacing marks them) take the tube's
-    // edge fall-off too; a card or the page ground does not.
-    // No film grain: a tube has raster, not grain.
-    LocalTui.current -> this.background(color).crt(
-        darkness = LocalChromeDarkness.current,
-        phosphor = MaterialTheme.colorScheme.primary,
-        overContent = false,
-        vignette = dotSpacing > 1f,
-        strength = strength,
-    )
+    // The TUI's chrome and canvases use the same non-linear paper/terminal
+    // substrate. It is not grain or scanlines, so no surface looks like it
+    // acquired a different material merely because it contains a WebView.
+    LocalTui.current -> this.background(color).tuiSurfaceTextureIf(fine = true)
     // Sky, then a matte tooth over it: the gradient and its blooms say the
     // canvas has depth, and the grain says the glass in front of it is cast
     // rather than polished. See [AERO_MATTE].

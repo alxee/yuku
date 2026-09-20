@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -74,9 +75,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.yuku.browser.core.Tab
 import com.yuku.browser.core.UrlUtils
 import com.yuku.browser.ui.theme.FieldBg
+import androidx.compose.ui.graphics.compositeOver
 import com.yuku.browser.ui.theme.FROSTED_ELEMENT_ALPHA
 import com.yuku.browser.ui.theme.LocalFrosted
 import com.yuku.browser.ui.theme.frostedIf
@@ -232,11 +235,12 @@ fun MenuSheet(
                     // No drop shadow under the TUI either: a tube lights
                     // things, it does not cast shadows under them.
                     // Nor on frosted glass, where it shows through the field.
-                    if (LocalNinety8.current || LocalAero.current || LocalTui.current || LocalFrosted.current) Modifier
+                    if (LocalNothing.current || LocalNinety8.current || LocalAero.current || LocalTui.current || LocalFrosted.current) Modifier
                     else Modifier.shadow(elevation = 6.dp, shape = specialCorner(24.dp), clip = false)
                 )
                 .clip(specialCorner(24.dp))
                 .background(if (LocalAero.current) FieldBg.copy(alpha = 0.22f) else FieldBg.frostedIf(FROSTED_ELEMENT_ALPHA))
+                .then(if (LocalNothing.current) Modifier.border(1.dp, HairLine, specialCorner(24.dp)) else Modifier)
                 .bevel98If(Bevel.Sunken)
                 // Aero agrees with 98 about what an address bar IS — a well
                 // set into the surface rather than a pill floating on it —
@@ -249,10 +253,9 @@ fun MenuSheet(
                 // The field's own fill covers the sheet's halo (drawn under
                 // content), so the address and its buttons glow on their own.
                 .tuiBloomIf()
-                // The TUI's field takes the quick tiles' outline: an accent
-                // rule at 40%, the edge the dropped shadow used to be. After
-                // the bloom, so it glows with the field's contents.
-                .tuiSoftOutlineIf(AccentColor.copy(alpha = 0.4f))
+                // Terminal controls are ruled in ink; the selected phosphor is
+                // reserved for their bloom and the canvas beneath them.
+                .tuiSoftOutlineIf(InkMuted.copy(alpha = 0.65f))
                 .padding(horizontal = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -540,8 +543,16 @@ internal fun MenuSwitch(checked: Boolean, enabled: Boolean = true, onToggle: () 
             onToggle()
         },
         colors = SwitchDefaults.colors(
-            checkedTrackColor = AccentColor.frostedIf(com.yuku.browser.ui.theme.FROSTED_ACCENT_ALPHA),
-            uncheckedTrackColor = MaterialTheme.colorScheme.surfaceContainerHighest.frostedIf(FROSTED_ELEMENT_ALPHA),
+            // Both tracks solid under translucent sheets: a switch thinned
+            // over frost washed out to the page's colour, and its state is
+            // the one thing it has to show.
+            checkedTrackColor = AccentColor,
+            // Nothing's off controls are still live controls, not disabled
+            // decoration. Leave the track unfilled, like the default theme,
+            // but give its border and thumb the same muted ink as the menu's
+            // chevrons.
+            uncheckedTrackColor = if (LocalNothing.current) Color.Transparent
+            else MaterialTheme.colorScheme.surfaceContainerHighest,
             // Material draws the checked thumb in `onPrimary` — right when
             // the accent is a dark colour, wrong for the Nothing theme's
             // light yellow, where it comes out as a black puck on a bright
@@ -550,6 +561,10 @@ internal fun MenuSwitch(checked: Boolean, enabled: Boolean = true, onToggle: () 
             // instead: pale on the paper end, dark on the black one.
             checkedThumbColor = if (LocalNothing.current) MaterialTheme.colorScheme.surface
             else MaterialTheme.colorScheme.onPrimary,
+            uncheckedThumbColor = if (LocalNothing.current) InkMuted
+            else SwitchDefaults.colors().uncheckedThumbColor,
+            uncheckedBorderColor = if (LocalNothing.current) InkMuted
+            else SwitchDefaults.colors().uncheckedBorderColor,
         ),
     )
 }
@@ -598,75 +613,37 @@ private fun AeroSwitch(checked: Boolean, enabled: Boolean, onToggle: () -> Unit)
 /** The TUI theme's switch: see [MenuSwitch]. */
 @Composable
 private fun TuiSwitch(checked: Boolean, enabled: Boolean = true, onToggle: () -> Unit) {
-    val travel = TUI_SWITCH_WIDTH - TUI_SWITCH_INSET * 2 - TUI_SWITCH_THUMB
-    val offset by animateDpAsState(
-        targetValue = if (checked) travel else 0.dp,
-        // Little ground to cross — a couple of dozen dp — which is what
-        // [pop] is for; [arrive]'s 1.2% would be a fraction of a pixel here.
-        animationSpec = pop(180),
-        label = "tuiSwitchThumb",
-    )
+    /*
+     * A terminal form is checked or blank; a sliding thumb implies a physical
+     * switch rather than a text-mode boolean. Keep the touch target square
+     * and replace the old track with a literal [x]/[ ] terminal field.
+     */
     Box(
         modifier = Modifier
-            .size(width = TUI_SWITCH_WIDTH, height = TUI_SWITCH_HEIGHT)
-            // Off is still the accent's control, just unlit: a faint accent
-            // well and an accent rule, rather than grey on grey.
-            .background(if (checked) AccentColor else AccentColor.copy(alpha = 0.12f))
-            .tuiSoftOutlineIf(if (checked) AccentColor else AccentColor.copy(alpha = 0.6f))
+            .size(TUI_CHECKBOX)
             .toggleable(
                 value = checked,
                 enabled = enabled,
-                role = Role.Switch,
-                // No ripple: the control is 52dp wide and square, and a
-                // circular ripple inside it is the one round thing left.
+                role = Role.Checkbox,
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
                 onValueChange = { onToggle() },
-            )
-            .padding(TUI_SWITCH_INSET),
-        contentAlignment = Alignment.CenterStart,
+            ),
+        contentAlignment = Alignment.Center,
     ) {
-        // The power switch's own legend, in the space the thumb has left:
-        // I on the lit track when on, O on the dark one when off. BasicText,
-        // not the theme's Text, which would lowercase the I into an i.
-        Box(
-            modifier = Modifier
-                .offset(x = if (checked) 0.dp else TUI_SWITCH_THUMB)
-                .size(width = travel, height = TUI_SWITCH_THUMB),
-            contentAlignment = Alignment.Center,
-        ) {
-            androidx.compose.foundation.text.BasicText(
-                text = if (checked) "I" else "O",
-                style = androidx.compose.ui.text.TextStyle(
-                    color = if (checked) MaterialTheme.colorScheme.onPrimary else AccentColor.copy(alpha = 0.8f),
-                    fontFamily = TuiMonoFamily,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                    fontSize = TUI_SWITCH_LEGEND,
-                ),
-            )
-        }
-        Box(
-            modifier = Modifier
-                .offset(x = offset)
-                .size(TUI_SWITCH_THUMB)
-                // On, the thumb is WHITE at both ends: paper-white on paper
-                // (onPrimary there) and the tube's own near-white ink in the
-                // dark, where onPrimary would be the black ground. Lerped by
-                // darkness so a light/dark turn doesn't snap.
-                .background(
-                    if (checked) lerp(MaterialTheme.colorScheme.onPrimary, InkStrong, LocalChromeDarkness.current)
-                    else AccentColor.copy(alpha = 0.6f)
-                ),
+        Text(
+            // It stays in the text ink so toggling never swaps hue or drops
+            // out of the sheet's shared glow.
+            text = if (checked) "[x]" else "[ ]",
+            color = if (!enabled) InkFaint else Ink,
+            style = MaterialTheme.typography.labelLarge,
+            fontFamily = TuiMonoFamily,
+            fontSize = 20.sp,
         )
     }
 }
 
-private val TUI_SWITCH_LEGEND = androidx.compose.ui.unit.TextUnit(13f, androidx.compose.ui.unit.TextUnitType.Sp)
-
-private val TUI_SWITCH_WIDTH = 52.dp
-private val TUI_SWITCH_HEIGHT = 30.dp
-private val TUI_SWITCH_INSET = 3.dp
-private val TUI_SWITCH_THUMB = 24.dp
+private val TUI_CHECKBOX = 36.dp
 
 @Composable
 private fun BarButton(
@@ -800,9 +777,13 @@ private fun RowScope.Tile(
                 when {
                     LocalAero.current -> if (active) AccentColor.copy(alpha = 0.18f) else FieldBg.copy(alpha = 0.16f)
                     ninety8 && !active -> MaterialTheme.colorScheme.surface
-                    // The TUI's tile on is a lit cell: a stronger wash than
-                    // the ordinary look's, so the accent carries the state.
+                    // An enabled terminal action is a lit key: its fill is
+                    // the phosphor itself, while the rule stays terminal ink.
                     LocalTui.current && active -> AccentColor.copy(alpha = 0.26f)
+                    // On frost a thin wash alone is washed out by the page;
+                    // an ON tile is laid on a solid field instead.
+                    active && LocalFrosted.current ->
+                        accentWash(0.16f).compositeOver(FieldBg)
                     active -> accentWash(0.16f)
                     else -> FieldBg.frostedIf(FROSTED_ELEMENT_ALPHA)
                 }
@@ -819,23 +800,23 @@ private fun RowScope.Tile(
             // glows on its own, above that fill — at a fraction while the
             // tile is disabled: its label is faint grey then, and a full
             // halo round dim type reads as broken, not lit.
-            // An ON tile's halo is added over the accent wash, so a BRIGHT
-            // accent (yellow, green, cyan) adds light onto light and the label
-            // blows out to a white smear, where blue and red stay a glow. The
-            // halo is scaled down by the accent's own luminance there.
+            // A coloured phosphor belongs in the glow, while the tile itself
+            // stays monochrome like a physical terminal control.
             .tuiBloomIf(
                 when {
                     !enabled -> 0.3f
-                    active -> (ON_TILE_BLOOM_LUMINANCE / AccentColor.luminance()).coerceIn(0.35f, 1f)
-                    else -> 1f
+                    active -> 1f
+                    else -> 0.7f
                 }
             )
-            // And an accent outline — faint while off, the accent itself on;
-            // on white-on-black chrome the colour has to be ON the controls.
-            // After the bloom, so the rule is recorded and glows with the
-            // label rather than sitting over the halo as a colder line.
+            // The rule follows that same ink grammar. It is stronger while
+            // active, but never borrows the accent from the phosphor.
             .tuiSoftOutlineIf(
-                if (!enabled) HairLine else AccentColor.copy(alpha = if (active) 1f else 0.4f)
+                when {
+                    !enabled -> HairLine
+                    active -> InkStrong.copy(alpha = 0.75f)
+                    else -> InkMuted.copy(alpha = 0.60f)
+                }
             )
             .then(
                 if (nothing) Modifier.border(
@@ -856,8 +837,8 @@ private fun RowScope.Tile(
     ) {
         // Under the TUI theme the tile is its word and nothing else — a
         // terminal has no glyphs to draw. The tile still says what state it
-        // is in: the accent wash behind it and the label's own colour are
-        // what carried that anyway, the icon's fill only repeated it.
+        // is in through its ink wash, rule, and phosphor halo; the icon's
+        // fill would only repeat that.
         if (!LocalTui.current) {
             Icon(
                 imageVector = icon,
@@ -962,6 +943,13 @@ internal fun MenuRow(
             .padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Navigation rows get the terminal's prompt marker on the leading
+        // edge. Form rows already carry a checkbox, so they keep that as the
+        // state marker rather than receiving a second one.
+        if (LocalTui.current && toggledTo == null) {
+            Text(text = ">", color = if (enabled) Ink else InkFaint, style = MaterialTheme.typography.bodyLarge)
+            Spacer(Modifier.width(8.dp))
+        }
         leading()
         Text(
             text = label,
@@ -981,7 +969,8 @@ internal fun Chevron() {
     // have used for it: it is not decoration on the row, it is the row
     // saying it leads somewhere.
     if (LocalTui.current) {
-        Text(text = ">", color = AccentColor, style = MaterialTheme.typography.bodyLarge)
+        // TUI navigation is marked at the row's leading edge; do not draw a
+        // second chevron after its label.
         return
     }
     Icon(
@@ -1027,9 +1016,3 @@ internal fun addressLabel(
 }
 
 private const val ADDRESS_PLACEHOLDER = "Search or enter address"
-
-/**
- * Accent luminance up to which an on tile keeps its full bloom. Red (~0.21)
- * and blue sit under it; green (~0.7) and yellow (~0.9) get about a third.
- */
-private const val ON_TILE_BLOOM_LUMINANCE = 0.3f

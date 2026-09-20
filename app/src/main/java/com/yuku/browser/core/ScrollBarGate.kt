@@ -3,6 +3,7 @@ package com.yuku.browser.core
 import android.os.Handler
 import android.os.Looper
 import android.view.MotionEvent
+import android.view.ViewConfiguration
 import android.webkit.WebView
 import kotlin.math.abs
 
@@ -32,11 +33,31 @@ import kotlin.math.abs
  * a [PixelCopy][android.view.PixelCopy] would otherwise put on the card.
  */
 class ScrollBarGate(private val web: WebView) {
+    /**
+     * Whether the scroll being reported now is the USER's: a finger is on the
+     * page, or a finger-driven scroll (and its fling) is still moving it. False
+     * for a page moving itself — duckduckgo.com's image viewer locks the body
+     * with `position: fixed`, which drops the offset to 0 in one jump.
+     */
+    val userDriven: Boolean get() = if (touchDown) gestureDragged else showing
+
     /** Whether the host will allow a bar at all right now — see WebViewHost. */
     private var hostAllows = false
 
     /** Whether a finger is currently on the page. */
     private var touchDown = false
+
+    /**
+     * Whether the finger currently down has physically moved enough to be a
+     * drag. This deliberately comes from touch coordinates, not the document
+     * offset: a site is free to reposition its document while handling a tap.
+     * Keeping it distinct from [showing] is important when a tap arrives while
+     * the previous fling's scrollbar is still fading.
+     */
+    private var gestureDragged = false
+
+    /** The Y coordinate at which the current touch started. */
+    private var downY = 0f
 
     /** Where the page stood when that finger went down. */
     private var anchorScrollY = 0
@@ -60,23 +81,38 @@ class ScrollBarGate(private val web: WebView) {
             MotionEvent.ACTION_DOWN -> {
                 touchDown = true
                 anchorScrollY = web.scrollY
+                downY = event.y
+                gestureDragged = false
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> touchDown = false
+            MotionEvent.ACTION_MOVE -> {
+                if (abs(event.y - downY) >= touchSlopPx()) gestureDragged = true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                touchDown = false
+                gestureDragged = false
+            }
         }
     }
 
     /** Passed every scroll the page reports, from the host's scroll listener. */
     fun onScroll(scrollY: Int) {
-        // Not showing and no finger down: something other than the user moved
-        // the page — a resync, an anchor jump, a script, a layout settling.
-        // Once showing, further scrolls keep it alive whether or not the
-        // finger is still there, which is what carries the bar through a
-        // fling.
-        if (!showing) {
-            if (!touchDown) return
-            if (abs(scrollY - anchorScrollY) < travelPx()) return
-            showing = true
-            apply()
+        // A document offset changing during a touch is not evidence of a
+        // scroll. Sites commonly do that while handling a menu click (for
+        // example by locking the body with position: fixed), and Keddr does it
+        // while its menu is first prepared. Require an actual finger drag
+        // before accepting its offset change, even if a previous fling has
+        // left [showing] true. Once the finger lifts, that existing state
+        // carries a genuine fling as before.
+        if (touchDown) {
+            if (!gestureDragged) return
+            if (!showing && abs(scrollY - anchorScrollY) >= travelPx()) {
+                showing = true
+                apply()
+            }
+        } else if (!showing) {
+            // Not showing and no finger down: a resync, anchor jump, script,
+            // or layout settling moved the page, not the user.
+            return
         }
         // Outlives the platform's own fade (~300ms delay + ~250ms fade), so
         // the bar is never cut off mid-fade by this timer — only ever by
@@ -115,6 +151,8 @@ class ScrollBarGate(private val web: WebView) {
     }
 
     private fun travelPx(): Float = TRAVEL_DP * web.resources.displayMetrics.density
+
+    private fun touchSlopPx(): Float = ViewConfiguration.get(web.context).scaledTouchSlop.toFloat()
 
     private companion object {
         /**

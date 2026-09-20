@@ -193,6 +193,12 @@ object UrlUtils {
             IPV6_LITERAL.matches(text) ||
             LOCALHOST.matches(text)
         if (!looksLikeHost) return engine.searchUrl(text)
+        // No top-level domain is all digits, so `3.14` or `v1.2` is a query —
+        // unless the whole host is an IPv4 address.
+        val host = hostOf(text)
+        if (!isIpv4(host) && host.contains('.') && host.substringAfterLast('.').all { it.isDigit() }) {
+            return engine.searchUrl(text)
+        }
         // A dotted-quad is an IP even where it would also parse as a hostname;
         // anything else local-only gets the same treatment.
         val scheme = if (isLocalHost(hostOf(text))) "http://" else "https://"

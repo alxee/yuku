@@ -71,6 +71,8 @@ class BrowserStore(app: Application) {
         val linkPreviewEnabled: Boolean = true,
         // Experimental glass edges on the page. See ui/PageLens.kt.
         val pageLens: Boolean = false,
+        // A slight, gradual blur where page content meets the status bar.
+        val statusBarBlur: Boolean = true,
         // Frosted-glass sheets (Default and Nothing looks only).
         val translucentSheets: Boolean = false,
         // How solid those sheets are, 0 (nearly clear) to 1 (nearly solid).
@@ -266,6 +268,7 @@ class BrowserStore(app: Application) {
             put("pullToRefreshEnabled", state.settings.pullToRefreshEnabled)
             put("linkPreviewEnabled", state.settings.linkPreviewEnabled)
             put("pageLens", state.settings.pageLens)
+            put("statusBarBlur", state.settings.statusBarBlur)
             put("translucentSheets", state.settings.translucentSheets)
             put("translucency", state.settings.translucency.toDouble())
             put("newTabPlacement", state.settings.newTabPlacement.name)
@@ -432,6 +435,7 @@ class BrowserStore(app: Application) {
             pullToRefreshEnabled = s?.optBoolean("pullToRefreshEnabled", true) ?: true,
             linkPreviewEnabled = s?.optBoolean("linkPreviewEnabled", true) ?: true,
             pageLens = s?.optBoolean("pageLens", false) ?: false,
+            statusBarBlur = s?.optBoolean("statusBarBlur", true) ?: true,
             translucentSheets = s?.optBoolean("translucentSheets", false) ?: false,
             translucency = (s?.optDouble("translucency", DEFAULT_TRANSLUCENCY.toDouble())
                 ?: DEFAULT_TRANSLUCENCY.toDouble()).toFloat().coerceIn(0f, 1f),

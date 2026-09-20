@@ -167,8 +167,12 @@ import com.yuku.browser.ui.theme.aeroGlassIf
 import com.yuku.browser.ui.theme.aeroPageGlass
 import com.yuku.browser.ui.theme.frostedSheetGlass
 import com.yuku.browser.ui.theme.bevel98If
+import com.yuku.browser.ui.theme.BEVEL_BAND
+import com.yuku.browser.ui.theme.LocalNinety8
+import com.yuku.browser.ui.theme.bevel98Colors
 import com.yuku.browser.ui.theme.tuiBloomIf
 import com.yuku.browser.ui.theme.tuiCrtIf
+import com.yuku.browser.ui.theme.tuiSurfaceTextureIf
 import com.yuku.browser.ui.theme.specialCorner
 
 private enum class Sheet {
@@ -637,6 +641,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
     val pullToRefreshEnabled by vm.pullToRefreshEnabled.collectAsStateWithLifecycle()
     val linkPreviewEnabled by vm.linkPreviewEnabled.collectAsStateWithLifecycle()
     val pageLens by vm.pageLens.collectAsStateWithLifecycle()
+    val statusBarBlur by vm.statusBarBlur.collectAsStateWithLifecycle()
     val translucentSheets by vm.translucentSheets.collectAsStateWithLifecycle()
     val translucency by vm.translucency.collectAsStateWithLifecycle()
     // Only the Default and Nothing looks: TUI and 98 are opaque by nature,
@@ -830,6 +835,10 @@ fun BrowserScreen(vm: BrowserViewModel) {
     var historyOpen by remember { mutableStateOf(false) }
     var downloadsOpen by remember { mutableStateOf(false) }
     var switcherOpen by remember { mutableStateOf(false) }
+    // The switcher remains composed through its close animation. If it is
+    // reopened before that animation unmounts it, a remembered LazyListState
+    // would otherwise keep the previous session's centered card.
+    var switcherSession by remember { mutableIntStateOf(0) }
     // Whether the page lens's black bezel can be up at all: the lens is on, there
     // is a page, and no full-screen destination is drawing its own ground under
     // the status bar. HOW MUCH of it is up is the lens's strength, which follows
@@ -880,8 +889,24 @@ fun BrowserScreen(vm: BrowserViewModel) {
         toolbarVisible = true
         pendingScroll = 0f
     }
-    fun onWebViewScroll(deltaY: Int, scrollY: Int) {
+    // A new document is brought in with the bar up; this used to fall out of
+    // the scroll rule below (a fresh page reports offset 0), which a page
+    // moving ITSELF can no longer reach.
+    val currentLoading = current?.loading == true
+    LaunchedEffect(currentLoading) {
+        if (currentLoading) {
+            toolbarVisible = true
+            pendingScroll = 0f
+        }
+    }
+    fun onWebViewScroll(deltaY: Int, scrollY: Int, userDriven: Boolean = true) {
         if (switcherOpen || sheet != null) return
+        // Only the user's own scrolling moves the bar. A page that locks its
+        // scroll for a viewer or a menu (duckduckgo.com's image viewer sets
+        // the body `position: fixed`) drops the offset to 0 in one jump, and
+        // the rule below read that as reaching the top — the bar sprang up
+        // over the image being opened, and hid again when it closed.
+        if (!userDriven) return
         if (scrollY <= 0) {
             // Always visible at the top of the page — otherwise a hidden bar
             // right as the page loads (before any real scroll) would need an
@@ -1181,6 +1206,10 @@ fun BrowserScreen(vm: BrowserViewModel) {
     val sheetCeilingPx = if (sheetExpandable) sheetExpandedHeightPx else sheetRestHeightPx
     val sheetHeightAnim = remember { Animatable(0f) }
     var aeroSheetBounds by remember { mutableStateOf(Rect.Zero) }
+    // The sheet's top corner radius as drawn (same `specialCorner` as its
+    // Surface), so the toolbar underneath is clipped to its arcs.
+    val sheetCornerPx = specialCorner(SHEET_CORNER).topStart
+        .toPx(Size(1_000_000f, 1_000_000f), LocalDensity.current)
     // The find bar's bounds, for the page glass to frost under it (Aero).
     var aeroFindBounds by remember { mutableStateOf(Rect.Zero) }
     // Under Aero the tab LIST is drawn over the whole screen rather than in
@@ -1457,6 +1486,15 @@ fun BrowserScreen(vm: BrowserViewModel) {
             lensAvailable && (tabViewMode == TabViewMode.List || 1f - shrinkOf(progress.value) > 0.5f)
         }
     }
+    // The tab manager owns the system-status-bar strip for its whole
+    // lifetime, including the empty-tabs screen and both halves of the page
+    // transition. The live page itself still reaches under that strip, so a
+    // background behind it is not enough: the manager's ground is painted
+    // back over the strip below, after the page has drawn.
+    val emptyTabManager = tabs.isEmpty()
+    val tabManagerOwnsStatusBar by remember(emptyTabManager) {
+        derivedStateOf { emptyTabManager || switcherOpen || progress.value > 0f }
+    }
     // Status/nav bar icon contrast has to track the app's own resolved
     // theme (which can be pinned to Light or Dark regardless of the system
     // setting), not the system's — that's not something the static XML
@@ -1480,10 +1518,10 @@ fun BrowserScreen(vm: BrowserViewModel) {
         ignorePrivacy = settingsOpen,
         // A tab list that fills the screen is under the bar instead of the
         // page, and it is chrome, so the icons follow the theme.
-        pageStatusDark = if (pageStripUnderStatusBar &&
+        pageStatusDark = if (!tabManagerOwnsStatusBar && pageStripUnderStatusBar &&
             !(listCoversStatusBar && switcherOpen && tabViewMode == TabViewMode.List)
         ) currentId?.let { statusStripDark[it] } else null,
-        blackStatusBar = lensChromeBlack,
+        blackStatusBar = lensChromeBlack && !tabManagerOwnsStatusBar,
         // A sheet covers the navigation bar with its own light surface.
         blackNavigationBar = lensChromeBlack && sheet == null,
     )
@@ -1734,6 +1772,12 @@ fun BrowserScreen(vm: BrowserViewModel) {
         // the most recently used one (see BrowserViewModel.stepToTab).
         vm.promoteSteppedTab()
         vm.captureAllThumbnails()
+        if (!switcherOpen) {
+            switcherSession++
+            currentCardCoordinates = null
+            centeredTabId = null
+            centeredCardCoordinates = null
+        }
         switcherOpen = true
         animateIntoSwitcher(280)
     }
@@ -2216,11 +2260,13 @@ fun BrowserScreen(vm: BrowserViewModel) {
             // opens, and back up once the sheet has fully gone (it is still
             // on screen for its own close animation after `sheet` is null,
             // hence the height too). Composition sees only the boolean.
+            // Full-screen destinations only. A SHEET does not slide the bar
+            // away (the slide was long, and under a translucent sheet it was
+            // seen going): the bar simply stops drawing the moment the sheet's
+            // top edge — its address bar — has risen over it, and comes back
+            // the moment it sinks below, so the swap happens under the sheet.
             val barCoveredByOverlay by remember {
-                derivedStateOf {
-                    sheetHeightAnim.value > 0f || sheet != null ||
-                        settingsOpen || bookmarksOpen || historyOpen || downloadsOpen
-                }
+                derivedStateOf { settingsOpen || bookmarksOpen || historyOpen || downloadsOpen }
             }
             val sheetBarSlide = animateFloatAsState(
                 targetValue = if (barCoveredByOverlay) 1f else 0f,
@@ -2239,10 +2285,62 @@ fun BrowserScreen(vm: BrowserViewModel) {
                     aeroBarCoordinates = coordinates
                 }.graphicsLayer {
                     val sheetSlide = sheetBarSlide.value
+                    val sheetH = sheetHeightAnim.value
+                    val cornerR = sheetCornerPx
+                    // Covered only once the sheet's rounded CORNERS have risen
+                    // past the bar's top too, not just its top edge: until then
+                    // the bar shows beside each arc, already in place.
+                    val underSheet = sheetH - cornerR >= size.height
                     translationY = size.height * maxOf(toolbarSlide.value, sheetSlide)
                     // Fully off the edge is also invisible, so nothing of the
                     // bar (a glow, a shadow) is left showing under the sheet.
-                    alpha = if (sheetSlide >= 1f) 0f else 1f
+                    alpha = if (sheetSlide >= 1f || underSheet) 0f else 1f
+                    // The bar is always there; only the part of it NOT under a
+                    // sheet is drawn. Clipped to the sheet's own top outline —
+                    // flat edge AND rounded corners (local space, so less the
+                    // slide) — which keeps a translucent sheet from showing the
+                    // bar through itself, and leaves no hole beside an arc.
+                    // Open upward, for the loading ruler's band above the bar.
+                    if (sheetH > 0f && !underSheet) {
+                        val visibleBottom = size.height - sheetH - translationY
+                        val sheetBounds = aeroSheetBounds
+                        val barLeft = aeroBarCoordinates?.takeIf { it.isAttached }
+                            ?.localToRoot(Offset.Zero)?.x ?: 0f
+                        val sheetLeft = if (sheetBounds.isEmpty) 0f else sheetBounds.left - barLeft
+                        val sheetRight = if (sheetBounds.isEmpty) size.width else sheetBounds.right - barLeft
+                        shape = object : androidx.compose.ui.graphics.Shape {
+                            override fun createOutline(
+                                size: Size,
+                                layoutDirection: androidx.compose.ui.unit.LayoutDirection,
+                                density: androidx.compose.ui.unit.Density,
+                            ): androidx.compose.ui.graphics.Outline {
+                                if (cornerR <= 0f) return androidx.compose.ui.graphics.Outline.Rectangle(
+                                    Rect(0f, -size.height, size.width, visibleBottom),
+                                )
+                                val far = size.height * 2f + cornerR * 2f
+                                val visible = androidx.compose.ui.graphics.Path().apply {
+                                    addRect(Rect(0f, -size.height, size.width, visibleBottom + cornerR))
+                                }
+                                val covered = androidx.compose.ui.graphics.Path().apply {
+                                    addRect(Rect(0f, visibleBottom, sheetLeft, far))
+                                    addRect(Rect(sheetRight, visibleBottom, size.width, far))
+                                    addRoundRect(androidx.compose.ui.geometry.RoundRect(
+                                        Rect(sheetLeft, visibleBottom, sheetRight, far),
+                                        CornerRadius(cornerR),
+                                    ))
+                                }
+                                return androidx.compose.ui.graphics.Outline.Generic(
+                                    androidx.compose.ui.graphics.Path().apply {
+                                        op(visible, covered, androidx.compose.ui.graphics.PathOperation.Difference)
+                                    },
+                                )
+                            }
+                        }
+                        clip = true
+                    } else {
+                        shape = androidx.compose.ui.graphics.RectangleShape
+                        clip = false
+                    }
                 }.then(
                     // The page lens's black under the WHOLE bar slot, behind
                     // the bar itself: a look whose bar is not a plain rectangle
@@ -2505,6 +2603,12 @@ fun BrowserScreen(vm: BrowserViewModel) {
                             // from a value the eye never saw.
                             p > 0.15f || velocity.y < FLING_VELOCITY_THRESHOLD -> {
                                 haptics.gestureEnd()
+                                if (!switcherOpen) {
+                                    switcherSession++
+                                    currentCardCoordinates = null
+                                    centeredTabId = null
+                                    centeredCardCoordinates = null
+                                }
                                 switcherOpen = true
                                 if (tabViewMode == TabViewMode.List) {
                                     scope.launch {
@@ -2655,20 +2759,18 @@ fun BrowserScreen(vm: BrowserViewModel) {
         // own. With the app pinned to Dark on a system that is light, that is
         // a white band between the retreating bar and the page.
         //
-        // Where the WebView ends is where the page ended when the bar was
-        // away: normally the bottom edge of the screen — but edge-to-edge
-        // that hands the page the strip behind the system navigation bar too,
-        // which is right for content that scrolls past it and wrong for a bar
-        // the page has pinned to the bottom edge: a tab bar, a player, a
-        // checkout button. Those don't scroll away, so they'd come to rest
-        // under the gesture pill. While the page says it has one, it stops at
-        // the navigation bar's own height instead.
+        // A tab bar, player or checkout button must clear the gesture pill.
+        // Detection can still control the overlay's treatment, but must not
+        // change the ordinary WebView's bounds after the page has painted.
         val pageHasBottomBar = pageBottomBars.containsKey(currentId)
         val navigationBarInset = with(density) {
             WindowInsets.navigationBars.getBottom(density).toDp()
         }
-        val pageFloorInset =
-            if (pageHasBottomBar) maxOf(navigationBarInset, MIN_PAGE_BOTTOM_BUFFER) else 0.dp
+        // Keep the native viewport independent of asynchronous DOM reports.
+        // Discovering a footer after first paint used to shorten the WebView
+        // by 24 CSS px, reflowing viewport-height heroes while their fixed
+        // headers stayed put. Reserve the safe floor before navigation.
+        val pageFloorInset = maxOf(navigationBarInset, MIN_PAGE_BOTTOM_BUFFER)
         val pageBottomInset = toolbarInset
         // The keyboard is the one thing the page must be made SHORTER for,
         // rather than shifted out of the way of. Chromium does not resize a
@@ -2703,21 +2805,20 @@ fun BrowserScreen(vm: BrowserViewModel) {
         val imeOverPage = sheet == null && !switcherOpen &&
             !settingsOpen && !bookmarksOpen && !historyOpen && !downloadsOpen
         val imeUp = imeTargetPx > 0 && imeOverPage
-        // Under the page lens the WebView is never stopped at the navigation
-        // bar: the screen's edge is bezel there, not a line a page's bar has
-        // to stay clear of, so the page runs to it and its bar is lifted clear
-        // of the bend instead (see lensBarLiftPx).
-        // Nor under Aero. Its toolbar is GLASS, so the floor strip — flat
-        // ground where the page stopped short at the navigation bar — was
-        // seen through it as a band with a hard top edge, appearing the
-        // moment a scroll woke a page's sticky bar. The page runs to the edge
-        // and its bar is lifted by the inset instead (pageChromeInsetPx).
+        // The WebView always runs to the screen's edge. If the page owns a
+        // bottom bar, PageBottomBar lifts that bar clear of the navigation
+        // inset and paints the exposed strip in the bar's own colour; changing
+        // the native viewport after DOM detection would reflow the page.
         val aeroChrome = com.yuku.browser.ui.theme.LocalAero.current
         val webBottomInset = when {
             imeUp -> maxOf(with(density) { imeTargetPx.toDp() }, pageFloorInset)
-            pageLens && pageLensSupported -> 0.dp
-            aeroChrome -> 0.dp
-            else -> pageFloorInset
+            // The page runs beneath the transparent navigation bar in every
+            // normal look. Ending the WebView at `pageFloorInset` left the
+            // browser's pale fallback canvas behind the gesture handle, which
+            // is a filled navigation bar even when the system bar itself is
+            // transparent. `pageEndPadPx` below keeps the document's final
+            // content clear of that handle.
+            else -> 0.dp
         }
         // Negative while the keyboard is up — the WebView is then SHORTER than
         // the page's box rather than hanging below it.
@@ -2738,16 +2839,10 @@ fun BrowserScreen(vm: BrowserViewModel) {
         }
         val lensOverscanPx = kotlin.math.ceil(lensDepthPx * PAGE_LENS_REACH).toInt()
             .coerceAtMost(statusBarPx)
-        // What a page's own bottom bar is lifted by under the lens while the
-        // toolbar is away, in place of the navigation-bar floor it gets
-        // without the lens (see webBottomInset). The bottom bend beneath it is
-        // made exactly this deep (WebViewHost), so the bar rests on the bend
-        // line and is never bent, with its colour painted down into the curve.
-        val lensBarLiftPx = if (lensDepthPx > 0f && !imeUp && pageHasBottomBar) {
-            (lensDepthPx * PAGE_LENS_BAR_CLEARANCE).toInt()
-        } else {
-            0
-        }
+        // Kept as a separate value for the WebView host's lens API. The
+        // navigation-bar clearance itself is supplied below for every visual
+        // theme, rather than being a lens-only treatment.
+        val lensBarLiftPx = 0
         // No lens overscan at this end. It used to ride the overflow — more
         // strip under the bar, past the screen's edge once the bar had gone —
         // and a WebView hanging past the window's visible bottom (the screen's
@@ -2769,7 +2864,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
         // with the keyboard up the WebView is smaller than that box, not
         // bigger — there is no strip under the toolbar to leave out.
         val capturedOverflowPx = pageOverflowPx.coerceAtLeast(0)
-        LaunchedEffect(capturedOverflowPx) { vm.setPageOverflow(capturedOverflowPx) }
+        SideEffect { vm.setPageOverflow(capturedOverflowPx) }
         // The same strip, but only while the bar is actually over it — this
         // one goes INTO the page, which moves its own bottom-anchored controls
         // up by it rather than leaving them under the toolbar until a scroll
@@ -2780,25 +2875,44 @@ fun BrowserScreen(vm: BrowserViewModel) {
         // back while it is still covering it.
         // Nothing to make room for while the keyboard is up: the page now
         // ENDS above it, and the toolbar is behind it.
-        // With the bar gone under the page lens, a page's own bottom bar is
-        // lifted clear of the bend instead (lensBarLiftPx).
-        // Under Aero (no floor, see webBottomInset) the same lift keeps it
-        // off the gesture pill.
+        // With the browser bar gone, every detected page bar gets the system
+        // navigation inset. This is deliberately independent of theme: the
+        // gesture handle must sit on a filled continuation of the site bar,
+        // never over the site's controls.
         val pageChromeInsetPx = when {
             toolbarVisible && !imeUp -> capturedOverflowPx
-            aeroChrome && pageHasBottomBar && !imeUp && lensBarLiftPx == 0 ->
+            pageHasBottomBar && !imeUp ->
                 with(density) { pageFloorInset.roundToPx() }
             else -> lensBarLiftPx
         }
-        LaunchedEffect(pageChromeInsetPx) { vm.setPageChromeInset(pageChromeInsetPx) }
-        // And the top overscan: the document is padded down by it, and
-        // captures start below it.
-        // Without the lens the view hangs under the whole status bar instead,
-        // and the page veils that strip itself; captures still start below it
-        // (a preview is the page box — cards extend the strip, PageTopStrip).
-        val pageTopOverscanPx = if (lensDepthPx > 0f) lensOverscanPx else statusStripPx
-        LaunchedEffect(pageTopOverscanPx) { vm.setPageTopOverscan(pageTopOverscanPx) }
-        LaunchedEffect(statusStripPx, statusStripFadePx) {
+        // Where the page runs under the navigation bar (no floor), the END of
+        // the document still has to clear it, or its last row rests under the
+        // gesture pill. Used by the page only while the inset above is 0.
+        val pageEndPadPx = if (!imeUp && webBottomInset == 0.dp) {
+            with(density) { navigationBarInset.roundToPx() }
+        } else {
+            0
+        }
+        SideEffect {
+            vm.setPageChromeInset(pageChromeInsetPx, pageEndPadPx)
+        }
+        // The page itself reaches beneath the transparent status bar. Normal
+        // flow is padded down by the same amount, so a document's first row is
+        // safe; a fixed masthead deliberately remains at top:0 and therefore
+        // supplies the real pixels behind the system icons. Keeping the view
+        // below the bar made a transparent bar reveal the browser's black
+        // fallback canvas instead of the page.
+        val pageTopOverscanPx = if (lensDepthPx > 0f) lensOverscanPx else statusBarPx
+        val pageTopContentInsetPx = if (lensDepthPx > 0f) lensOverscanPx else statusBarPx
+        SideEffect {
+            vm.setPageTopOverscan(pageTopOverscanPx)
+            // Flow content and viewport-fixed site headers both need the safe
+            // top inset. The header remains fixed, but rests immediately below
+            // the system bar; the strip above it is painted from that header's
+            // sampled colour (PageTopInset.setStrip). Leaving a fixed header at
+            // top:0 puts its controls beneath the opaque strip and makes the
+            // masthead appear to vanish.
+            vm.setPageTopInset(pageTopContentInsetPx, pageTopContentInsetPx)
             vm.setPageTopStrip(statusStripPx, statusStripFadePx)
         }
         SideEffect {
@@ -2809,16 +2923,15 @@ fun BrowserScreen(vm: BrowserViewModel) {
         // Bars and the document's start paint their overscan in their own
         // colour, so the curve reading it pulls in the header, not the page.
         //
-        // Under Aero the same fill is what fills the NAVIGATION BAR strip under
-        // a page's own bottom bar once the toolbar has gone: the bar is lifted
-        // off the gesture pill by the inset (pageChromeInsetPx), and without a
-        // fill whatever scrolls behind it showed through that strip under the
-        // bar (auto.ria.com's nav). Keyed to the toolbar's TARGET, like the
-        // inset, so the fill arrives as the toolbar starts to collapse and is
-        // taken away as it starts to come back.
+        // The fill covers the SYSTEM NAVIGATION BAR strip under a page's own
+        // bottom bar once the toolbar has gone. The bar is lifted off the
+        // gesture pill by pageChromeInsetPx, and the exposed strip is painted
+        // from the site's bar itself (auto.ria.com's nav, for example), so it
+        // reads as one continuous surface in every browser theme. Keyed to the
+        // toolbar's target, like the inset, so both change together.
         val pageBarFillPx = when {
-            lensDepthPx > 0f -> lensDepthPx.toInt()
-            aeroChrome && pageHasBottomBar && !toolbarVisible && !imeUp ->
+            lensDepthPx > 0f -> kotlin.math.ceil(lensDepthPx * maxOf(1f, PAGE_LENS_REACH)).toInt()
+            pageHasBottomBar && !toolbarVisible && !imeUp ->
                 with(density) { pageFloorInset.roundToPx() }
             else -> 0
         }
@@ -2826,8 +2939,8 @@ fun BrowserScreen(vm: BrowserViewModel) {
         // status bar, painted above a header in the header's colour.
         // No fill for the status bar strip: a fill is paint in the PAGE, and
         // the page is what a preview captures — the app draws the strip.
-        val pageTopFillPx = if (lensDepthPx > 0f) lensDepthPx.toInt() else 0
-        LaunchedEffect(pageTopFillPx, pageBarFillPx) { vm.setPageBarFill(pageTopFillPx, pageBarFillPx) }
+        val pageTopFillPx = if (lensDepthPx > 0f) kotlin.math.ceil(lensDepthPx * maxOf(1f, PAGE_LENS_REACH)).toInt() else 0
+        SideEffect { vm.setPageBarFill(pageTopFillPx, pageBarFillPx) }
         androidx.compose.runtime.DisposableEffect(vm) {
             vm.captureUnwarp = { web, copy, factor, originY ->
                 if (pageLensSupported) PageLens.peek(web)?.unwarp(copy, factor, originY)
@@ -2891,6 +3004,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
         // visible through the page for the first half of the animation. It
         // rises over the plain page background instead.
         val switcherMounted = switcherOpen || progressEngaged
+        val tabManagerBg = com.yuku.browser.ui.theme.SwitcherBg
 
         Box(
             Modifier
@@ -2899,7 +3013,23 @@ fun BrowserScreen(vm: BrowserViewModel) {
                     end = padding.calculateEndPadding(LocalLayoutDirection.current),
                 )
                 .fillMaxSize()
-                .background(if (switcherMounted) com.yuku.browser.ui.theme.SwitcherBg else PageBg)
+                .background(if (switcherMounted || emptyTabManager) tabManagerBg else PageBg)
+                // The switcher and empty-state canvases themselves extend
+                // beneath the transparent status bar. Keep the TUI substrate
+                // continuous across the containing box as well.
+                .tuiSurfaceTextureIf(fine = switcherMounted)
+                // The page lens's bezel behind the status bar, at the lens's
+                // strength (read in draw), and only the status bar's height.
+                .then(
+                    if (!lensAvailable) Modifier
+                    else Modifier.drawBehind {
+                        drawRect(
+                            Color.Black,
+                            size = androidx.compose.ui.geometry.Size(size.width, statusBarPx.toFloat()),
+                            alpha = lensStrength().coerceIn(0f, 1f),
+                        )
+                    }
+                )
                 // The page lens's bezel behind the status bar: black at the
                 // lens's own strength, read per frame in the draw phase. It
                 // used to be the Scaffold's container colour, switched by a
@@ -2911,18 +3041,6 @@ fun BrowserScreen(vm: BrowserViewModel) {
                 // under the status bar (its top padding is inside the glass
                 // layer), so a strip drawn before it was painted over, and
                 // the bar showed the page ground instead of black.
-                .then(
-                    if (!lensAvailable) Modifier
-                    else Modifier.drawBehind {
-                        // Its continuation below the bar is on the page's own
-                        // layer (see the tab's page Box), above the switcher.
-                        drawRect(
-                            Color.Black,
-                            size = androidx.compose.ui.geometry.Size(size.width, statusBarPx.toFloat()),
-                            alpha = lensStrength().coerceIn(0f, 1f),
-                        )
-                    }
-                )
                 // The lens's display corners, in SCREEN space rather than in
                 // the page's shader, so a page zooming out of its card does
                 // not carry them in: pinned under the status bar and on the
@@ -2949,6 +3067,9 @@ fun BrowserScreen(vm: BrowserViewModel) {
                         val r = lensCornerFor(lensHostView, lensDepthPx) * LENS_CORNER_EXTENT
                         if (r <= 0f) return@drawWithContent
                         val top = statusBarPx.toFloat()
+                        // On the page's visible bottom edge, as the lens has it
+                        // (WebViewHost's bottomCoverPx): the toolbar's top,
+                        // sliding down to the screen's edge.
                         val bottom = size.height - toolbarInset.toPx() * (1f - toolbarSlide.value)
                         if (bottom - top < 2f * r) return@drawWithContent
                         // Soft only round the arcs, tapering to a hard edge
@@ -2980,8 +3101,10 @@ fun BrowserScreen(vm: BrowserViewModel) {
                         if (!aeroDestinationBounds.isEmpty) aeroDestinationPaneAlpha() else 1f
                     },
                     barInRoot = {
-                        if (lensChromeBlack || toolbarSlide.value >= 1f || sheetHeightAnim.value > 0f || sheet != null) Rect.Zero
-                        else aeroBarCoordinates?.takeIf { it.isAttached }?.let { coordinates ->
+                        // The bar stops drawing once a sheet's top is over it.
+                        val sheetH = sheetHeightAnim.value
+                        if (lensChromeBlack || toolbarSlide.value >= 1f) Rect.Zero
+                        else aeroBarCoordinates?.takeIf { it.isAttached && sheetH - sheetCornerPx < it.size.height }?.let { coordinates ->
                             // Use the same animation clock as the toolbar.
                             // Reading transformed coordinates here can see
                             // the preceding frame's graphics-layer position.
@@ -3001,13 +3124,19 @@ fun BrowserScreen(vm: BrowserViewModel) {
                     // edge, over the navigation bar; it has slid away while a
                     // sheet is up, where the sheet's own region takes over.
                     barInRoot = {
-                        if (lensChromeBlack || toolbarSlide.value >= 1f || sheetHeightAnim.value > 0f || sheet != null) Rect.Zero
-                        else aeroBarCoordinates?.takeIf { it.isAttached }?.let { coordinates ->
+                        // Frosted exactly while the bar is drawn: until a
+                        // sheet's top edge has risen over it.
+                        val sheetH = sheetHeightAnim.value
+                        if (lensChromeBlack || toolbarSlide.value >= 1f) Rect.Zero
+                        else aeroBarCoordinates?.takeIf { it.isAttached && sheetH - sheetCornerPx < it.size.height }?.let { coordinates ->
                             val rootHeight = coordinates.findRootCoordinates().size.height.toFloat()
                             val height = coordinates.size.height.toFloat()
                             val left = coordinates.localToRoot(Offset.Zero).x
                             val top = rootHeight - height * (1f - toolbarSlide.value)
-                            Rect(left, top, left + coordinates.size.width, rootHeight)
+                            // Nothing's loading ruler rises out of the bar
+                            // in a band of the bar's own frosted fill.
+                            val band = if (frostNothing) with(density) { RulerBand.height.toPx() } * RulerBand.reveal() else 0f
+                            Rect(left, top - band, left + coordinates.size.width, rootHeight)
                         } ?: Rect.Zero
                     },
                     findInRoot = { aeroFindBounds },
@@ -3025,7 +3154,11 @@ fun BrowserScreen(vm: BrowserViewModel) {
                 // Centered in the space above the bar, like everything else
                 // that isn't the page itself.
                 // The ground itself runs under the bar (see EmptyState).
-                EmptyState(private = privateMode, bottomInset = toolbarInset)
+                EmptyState(
+                    private = privateMode,
+                    topInset = padding.calculateTopPadding(),
+                    bottomInset = toolbarInset,
+                )
             } else {
                 if (switcherMounted) {
                     // Only actually animates when tabViewMode itself changes
@@ -3065,6 +3198,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
                             if (!aeroListOverlay) TabListSwitcher(
                                 tabs = tabs,
                                 currentId = currentId,
+                                sessionKey = switcherSession,
                                 // Not `progress`: the list fades on its own
                                 // clock, and a tabs-button drag has committed
                                 // to nothing until it is released — which is
@@ -3090,6 +3224,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
                             TabSwitcher(
                                 tabs = tabs,
                                 currentId = currentId,
+                                sessionKey = switcherSession,
                                 floatingTabId = floatingTabId,
                                 freezeRowForExpansion = expandingTabId != null,
                                 progress = switchProgressOf,
@@ -3349,10 +3484,32 @@ fun BrowserScreen(vm: BrowserViewModel) {
                             // layer, not the shared box above: the list is
                             // composed inside that box, and blurring it there
                             // would blur the list too.
+                            // A RenderEffect is cut to its layer's bounds and
+                            // the page hangs above this box under the status
+                            // bar, so the layer is laid out up by the strip and
+                            // its content padded back down — otherwise the bar
+                            // showed the app's ground over a short list.
+                            .then(
+                                if (!(frostedSheets && tabViewMode == TabViewMode.List) || statusStripPx <= 0) Modifier
+                                else Modifier.layout { measurable, constraints ->
+                                    val up = statusStripPx
+                                    val placeable = measurable.measure(
+                                        constraints.copy(
+                                            minHeight = constraints.minHeight + up,
+                                            maxHeight = constraints.maxHeight + up,
+                                        ),
+                                    )
+                                    layout(placeable.width, placeable.height - up) { placeable.place(0, -up) }
+                                }
+                            )
                             .frostedSheetGlass(
                                 enabled = frostedSheets && tabViewMode == TabViewMode.List,
                                 corner = frostSheetCorner,
                                 paneInRoot = { aeroListPane.rect() },
+                            )
+                            .then(
+                                if (!(frostedSheets && tabViewMode == TabViewMode.List) || statusStripPx <= 0) Modifier
+                                else Modifier.padding(top = with(density) { statusStripPx.toDp() })
                             )
                             // The page lens's bezel carried on below the status
                             // bar — solid for a bend's depth, then easing out —
@@ -3398,7 +3555,12 @@ fun BrowserScreen(vm: BrowserViewModel) {
                                 // this Box covers the whole screen — a wash
                                 // left on would speckle the switcher behind
                                 // it for the same reason the fill has to go.
-                                strength = if (liveVisible) 1f else 0f,
+                                // Nothing's dot field is off here outright: this
+                                // ground is the PAGE's own colour, and it shows
+                                // through the navigation bar strip under a site's
+                                // bottom bar (auto.ria.com) — a printed grid there
+                                // reads as chrome leaking under the page.
+                                strength = if (liveVisible && !com.yuku.browser.ui.theme.LocalNothing.current) 1f else 0f,
                             )
                             .padding(bottom = pageBottomInset)
                             .graphicsLayer {
@@ -3418,11 +3580,17 @@ fun BrowserScreen(vm: BrowserViewModel) {
                         tab = tab,
                         overflowBottomPx = pageOverflowPx,
                         overscanTopPx = pageTopOverscanPx,
+                        pageTopContentInsetPx = pageTopContentInsetPx,
                         statusBarHeightPx = statusBarPx,
                         stripAbovePx = statusStripPx.toFloat(),
                         stripFadePx = statusStripFadePx.toFloat(),
+                        statusBarBlur = statusBarBlur,
                         lensDepthPx = lensDepthPx,
                         lensBarLiftPx = lensBarLiftPx,
+                        pageChromeInsetPx = pageChromeInsetPx,
+                        pageEndPadPx = pageEndPadPx,
+                        pageTopFillPx = pageTopFillPx,
+                        pageBottomFillPx = pageBarFillPx,
                         progress = effectiveProgress,
                         targetRect = targetRect,
                         offsetX = effectiveOffsetX,
@@ -3431,13 +3599,13 @@ fun BrowserScreen(vm: BrowserViewModel) {
                         visible = liveVisible,
                         warming = liveWarming,
                         toolbarSlide = remember { { toolbarSlide.value } },
-                        onScroll = { deltaY, scrollY ->
+                        onScroll = { deltaY, scrollY, userDriven ->
                             // Any scroll invalidates this tab's last preview,
                             // and the stillness after one is when the next
                             // copy gets taken.
                             vm.notePageMoved(tab.id)
                             vm.notePageScrolled(tab.id)
-                            onWebViewScroll(deltaY, scrollY)
+                            onWebViewScroll(deltaY, scrollY, userDriven)
                         },
                     )
                     // The static counterpart of the live WebView above — shown
@@ -3449,10 +3617,10 @@ fun BrowserScreen(vm: BrowserViewModel) {
                         tab = tab,
                         fullGrab = com.yuku.browser.ui.theme.LocalAero.current || com.yuku.browser.ui.theme.LocalFrosted.current,
                         lensDepthPx = lensDepthPx,
-                        lensBelowPx = pageOverflowPx.toFloat(),
                         stripAbovePx = statusStripPx.toFloat(),
                         stripFadePx = statusStripFadePx.toFloat(),
                         stripReports = vm.statusStrips,
+                        statusBarBlur = statusBarBlur,
                         progress = effectiveProgress,
                         targetRect = targetRect,
                         offsetX = effectiveOffsetX,
@@ -3481,11 +3649,9 @@ fun BrowserScreen(vm: BrowserViewModel) {
                                 (pageShrinkSuppressed || !atRestOpen)
                             ) || handoffCover,
                     )
-                    // The long counterpart of that handoff: a WebView
-                    // built from nothing — after a relaunch, or for a tab
-                    // whose view was evicted — has no page at all, it has one
-                    // to fetch and render, so it is blank for as long as that
-                    // takes. The handoff's few frames are nowhere near it.
+                    // A fresh load without usable saved state still needs
+                    // time to fetch and render. Successful restores skip
+                    // this cover so the cached page is visible immediately.
                     // This holds the preview saved on the way out over it
                     // until the real page has painted. Gated on liveVisible
                     // so it never fights the switcher for the screen — every
@@ -3495,7 +3661,6 @@ fun BrowserScreen(vm: BrowserViewModel) {
                     PageCover(
                         tab = tab,
                         lensDepthPx = lensDepthPx,
-                        lensBelowPx = pageOverflowPx.toFloat(),
                         visible = tab.id in coveredTabIds && liveVisible,
                         onGiveUp = { vm.dismissPageCover(tab.id) },
                     )
@@ -3619,6 +3784,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
             TabListSwitcher(
                 tabs = tabs,
                 currentId = currentId,
+                sessionKey = switcherSession,
                 open = switcherOpen,
                 onSelect = ::selectTabFromCard,
                 onClose = vm::closeTab,
@@ -3694,13 +3860,6 @@ fun BrowserScreen(vm: BrowserViewModel) {
                 // sheetWidth. The Box around this is BottomCenter-aligned, so
                 // the narrower surface centres itself with no offset here.
                 .then(sheetWidth())
-                // A sheet is a window, and under 98 a window has an edge: the
-                // raised bevel that every panel in that system is told from
-                // its background by. Only three of its four sides are ever on
-                // screen — the fourth is past the bottom of the window with
-                // the two rounded corners this surface is already hiding
-                // down there.
-                .bevel98If()
                 // And under Aero it is a pane of glass held over the page:
                 // the sheet's own colour is already translucent (see
                 // `AeroLightScheme`), and this is the light on it — the
@@ -3731,6 +3890,15 @@ fun BrowserScreen(vm: BrowserViewModel) {
                         transformOrigin = TransformOrigin(0.5f, 1f)
                     }
                 }
+                // A sheet is a window, and under 98 a window has an edge: the
+                // raised bevel that every panel in that system is told from
+                // its background by. Keep it INSIDE the stretch layer above,
+                // so its top and side bands transform with the sheet edge
+                // instead of being redrawn at the unstretched layout bounds.
+                // Only three of its four sides are ever on screen — the fourth
+                // is past the bottom of the window with the two rounded
+                // corners this surface is already hiding down there.
+                .bevel98If()
                 // Read in the LAYOUT phase, not during composition. Reading
                 // sheetHeightAnim.value straight into a .height() modifier
                 // reads it in BrowserScreen's own composition scope, so every
@@ -4412,6 +4580,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
             pullToRefreshEnabled = pullToRefreshEnabled,
             linkPreviewEnabled = linkPreviewEnabled,
             pageLens = pageLens,
+            statusBarBlur = statusBarBlur,
             translucentSheets = translucentSheets,
             translucency = translucency,
             newTabPlacement = newTabPlacement,
@@ -4452,6 +4621,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
             },
             onSetZoomStep = vm::setZoomStep,
             onTogglePageLens = vm::togglePageLens,
+            onToggleStatusBarBlur = vm::toggleStatusBarBlur,
             onToggleTranslucentSheets = vm::toggleTranslucentSheets,
             onSetTranslucency = vm::setTranslucency,
             onToggleAutoFocusNewTabKeyboard = vm::toggleAutoFocusNewTabKeyboard,
@@ -4613,6 +4783,9 @@ private fun WebViewHost(
     // How far the view hangs ABOVE the page's box, under the status bar, and
     // the bend's depth — both zero unless the page lens is on (see PageLens).
     overscanTopPx: Int = 0,
+    // The part of the top overscan that is not a system safe area and must
+    // therefore be reserved in the document itself (page lens only).
+    pageTopContentInsetPx: Int = 0,
     // The spinner lives in this band, even when the page lens supplies the
     // overscan instead of the page's status-strip overlay.
     statusBarHeightPx: Int = 0,
@@ -4621,10 +4794,21 @@ private fun WebViewHost(
     stripAbovePx: Float = 0f,
     // How far below the status bar's edge the drawn strip fades out.
     stripFadePx: Float = 0f,
+    // The preference applies to the wipe's leading edge as well as the page
+    // content behind the status strip.
+    statusBarBlur: Boolean = true,
     lensDepthPx: Float = 0f,
     // How far a page's own bottom bar is lifted while the toolbar is away,
     // or 0 when it has none (see BrowserScreen's lensBarLiftPx).
     lensBarLiftPx: Int = 0,
+    // These are also published immediately before a WebView is created below.
+    // A document-start script reads them synchronously; publishing only from
+    // a Compose effect lets a fast page paint once at zero, then reflow when
+    // the effect adds the system-bar room.
+    pageChromeInsetPx: Int = 0,
+    pageEndPadPx: Int = 0,
+    pageTopFillPx: Int = 0,
+    pageBottomFillPx: Int = 0,
     // Deferred reads: these three move once per frame for a whole switcher
     // gesture and are only ever consumed inside the graphicsLayer below.
     // Taken as values instead, this composable — and so the AndroidView update
@@ -4642,7 +4826,7 @@ private fun WebViewHost(
     // How far the toolbar has slid away (0 = up, 1 = gone), read per frame by
     // the page lens only — it decides where the page's visible bottom is.
     toolbarSlide: () -> Float = { 0f },
-    onScroll: (deltaY: Int, scrollY: Int) -> Unit = { _, _ -> },
+    onScroll: (deltaY: Int, scrollY: Int, userDriven: Boolean) -> Unit = { _, _, _ -> },
 ) {
     val density = LocalDensity.current
     val cornerRadiusPx = with(density) { 16.dp.toPx() } * SpecialCornerScale
@@ -4718,34 +4902,9 @@ private fun WebViewHost(
         overflowBottomPx.coerceAtLeast(0).toFloat()
     } else 0f
     val cardMarks = com.yuku.browser.ui.theme.rememberAeroCardMarks()
-    // The status bar strip, drawn over the page (see drawStatusStrip) and
-    // softened by a blur on the WebView view itself, both in proportion to
-    // how much of the screen the page fills.
+    // The status bar strip, drawn over the page (see drawStatusStrip) in
+    // proportion to how much of the screen the page fills.
     val stripPaint = rememberStatusStripPaint(vm.statusStrips, tab.id)
-    if (stripAbovePx > 0f && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-        val statusBlur = remember { StatusBlur() }
-        val blurredView = remember { arrayOfNulls<WebView>(1) }
-        LaunchedEffect(tab.id, stripAbovePx, stripFadePx) {
-            androidx.compose.runtime.snapshotFlow {
-                val shown = if (stripPaint.on) 1f else 0f
-                val a = stripPaint.ramp * (1f - stripPaint.share) * shown *
-                    (1f - shrinkOf(currentProgress.value()).coerceIn(0f, 1f))
-                kotlin.math.round(a * 20f) / 20f
-            }.distinctUntilChanged().collect { a ->
-                val web = vm.webViewFor(tab)
-                val previous = blurredView[0]
-                if (previous != null && previous !== web) previous.setRenderEffect(null)
-                blurredView[0] = web
-                web.setRenderEffect(statusBlur.effect(stripAbovePx, stripFadePx, a, density.density))
-            }
-        }
-        androidx.compose.runtime.DisposableEffect(tab.id) {
-            onDispose {
-                blurredView[0]?.setRenderEffect(null)
-                blurredView[0] = null
-            }
-        }
-    }
 
     // The transform lives on this Box — the page's BOX, the screen minus the
     // toolbar — rather than on the AndroidView, which is [overflowBottomPx]
@@ -4759,6 +4918,15 @@ private fun WebViewHost(
     Box(
         Modifier
             .fillMaxSize()
+            .ninety8ShrinkChrome(
+                visible = visible,
+                targetRect = targetRect,
+                progress = progress,
+                offsetX = offsetX,
+                offsetY = offsetY,
+                belowPx = { _, _ -> shrinkBelowPx },
+                abovePx = stripAbovePx,
+            )
             .graphicsLayer {
                 val shrinkProgress = shrinkOf(progress())
                 applyShrinkTransform(
@@ -4782,7 +4950,11 @@ private fun WebViewHost(
                 if (stripAbovePx <= 0f || pullIndicatorActive) Modifier
                 else Modifier.drawWithContent {
                     drawContent()
-                    drawStatusStrip(stripPaint, stripAbovePx, stripFadePx, 1f - shrinkOf(progress()).coerceIn(0f, 1f))
+                    drawStatusStrip(
+                        stripPaint, stripAbovePx,
+                        1f - shrinkOf(progress()).coerceIn(0f, 1f),
+                        softenWipeEdge = statusBarBlur,
+                    )
                 }
             )
             // The card's rim and glare, coming in as the live page shrinks —
@@ -4815,7 +4987,8 @@ private fun WebViewHost(
                 layout(constraints.maxWidth, constraints.maxHeight) {
                     placeable.place(0, -overscanTopPx)
                 }
-            },
+            }
+            .statusBarBlur(statusBarBlur && !pullIndicatorActive, stripAbovePx),
         factory = { ctx ->
             WebViewSwipeRefreshLayout(ctx).apply {
                 // The picture the reload is held on is taken as the pull
@@ -4892,6 +5065,16 @@ private fun WebViewHost(
             } else {
                 swipeRefresh.isRefreshing = false
             }
+            // This must precede webViewFor(): create() attaches the
+            // document-start inset bridges and immediately starts navigation.
+            // Keeping the values ready here makes the first document layout
+            // match the already-measured AndroidView bounds, rather than
+            // correcting it a frame later via a Compose effect.
+            vm.setPageTopOverscan(overscanTopPx)
+            vm.setPageTopInset(pageTopContentInsetPx, pageTopContentInsetPx)
+            vm.setPageTopStrip(stripAbovePx.roundToInt(), stripFadePx.roundToInt())
+            vm.setPageChromeInset(pageChromeInsetPx, pageEndPadPx)
+            vm.setPageBarFill(pageTopFillPx, pageBottomFillPx)
             val webContainer = swipeRefresh.webContainer
             val web = vm.webViewFor(tab)
             // Nothing but a finger-driven scroll of a settled page is
@@ -4920,7 +5103,7 @@ private fun WebViewHost(
             val lens = if (pageLensSupported) PageLens.of(web) else null
             web.setOnScrollChangeListener { _, _, scrollY, _, oldScrollY ->
                 scrollBarGate.onScroll(scrollY)
-                currentOnScroll.value(scrollY - oldScrollY, scrollY)
+                currentOnScroll.value(scrollY - oldScrollY, scrollY, scrollBarGate.userDriven)
             }
             if (webContainer.getChildAt(0) !== web) {
                 webContainer.removeAllViews()
@@ -4935,27 +5118,22 @@ private fun WebViewHost(
             }
             if (lens != null) {
                 lensSlot.lens = lens
-                // The strip under the toolbar is page nobody sees; the lens's
-                // bottom edge sits on the toolbar's top as it slides. (No
-                // overscan at this end — see BrowserScreen's pageOverflowPx.)
                 val overscan = overscanTopPx.toFloat()
-                // The curve's bottom edge is the SCREEN's, toolbar or not: its
-                // fade touches the edge, and a raised toolbar simply covers it,
-                // rather than the page ending in a margin above the bar.
-                lens.bottomCoverPx = { 0f }
-                // Under a page's own bottom bar, with the toolbar away, the
-                // bottom bend is only as deep as the gap the bar was lifted
-                // by, so the bar itself is never bent. With the toolbar up it
-                // is the ordinary depth (which is also what the switcher's
-                // pictures are curved with); the slide carries it between.
-                val barLift = lensBarLiftPx.toFloat()
-                lens.bottomDepthPx = {
-                    if (barLift > 0f) {
-                        lensDepthPx + (barLift - lensDepthPx) * currentToolbarSlide.value()
-                    } else {
-                        lensDepthPx
-                    }
+                // The bottom edge is built like the top one: the bend, its
+                // fade and the corners sit on the toolbar's top and ride it
+                // as it slides, reading the strip under the bar — real page,
+                // as the top reads the strip under the status bar. With the
+                // bar gone the page runs to the screen's edge, no bezel strip:
+                // the curve stretches the last rows into the bend (the view
+                // cannot hang past the window — see pageOverflowPx). Nothing
+                // while the keyboard is up: the view ends at its top.
+                val underBar = overflowBottomPx.toFloat()
+                lens.bottomCoverPx = {
+                    if (underBar < 0f) 0f
+                    else underBar * (1f - currentToolbarSlide.value().coerceIn(0f, 1f))
                 }
+                // Same depth at both ends.
+                lens.bottomDepthPx = { Float.NaN }
                 // A view bound mid-shrink starts at the shrink's strength; read
                 // unobserved, or this update block would re-run every frame.
                 lens.setStrength(
@@ -5255,6 +5433,7 @@ private fun QuickSwitchOverlay(
 ) {
     if (outgoing == null && incoming == null) return
     val density = LocalDensity.current
+    val ninety8 = LocalNinety8.current
     val cornerRadiusPx = with(density) { QUICK_SWITCH_CORNER.toPx() } * SpecialCornerScale
     val gapPx = with(density) { QUICK_SWITCH_GAP.toPx() }
     Box(Modifier.fillMaxSize()) {
@@ -5266,7 +5445,7 @@ private fun QuickSwitchOverlay(
         outgoing?.let { tab ->
             // Leaving: full screen and flat at 0, a whole separation off the
             // side by 1.
-            QuickSwitchFace(tab) {
+            QuickSwitchFace(tab, chromeAmount = { pullBack(progress()) }) {
                 val progress = progress()
                 val pulled = pullBack(progress)
                 val scale = 1f - QUICK_SWITCH_ZOOM * pulled
@@ -5274,7 +5453,7 @@ private fun QuickSwitchOverlay(
                 scaleY = scale
                 translationX = -direction * progress * separation(size.width, scale, gapPx)
                 shape = RoundedCornerShape((cornerRadiusPx / scale) * pulled)
-                clip = pulled > 0f
+                clip = pulled > 0f && !ninety8
             }
         }
         incoming?.let { tab ->
@@ -5289,7 +5468,7 @@ private fun QuickSwitchOverlay(
             // would be a page growing past full size, and — since a corner
             // radius cannot be negative — an invalid shape. `pullBack` clamps
             // for exactly that reason.
-            QuickSwitchFace(tab) {
+            QuickSwitchFace(tab, chromeAmount = { pullBack(progress()) }) {
                 val remaining = 1f - progress()
                 val pulled = pullBack(1f - remaining)
                 val scale = 1f - QUICK_SWITCH_ZOOM * pulled
@@ -5297,7 +5476,7 @@ private fun QuickSwitchOverlay(
                 scaleY = scale
                 translationX = direction * remaining * separation(size.width, scale, gapPx)
                 shape = RoundedCornerShape((cornerRadiusPx / scale) * pulled)
-                clip = pulled > 0f
+                clip = pulled > 0f && !ninety8
             }
         }
     }
@@ -5330,12 +5509,16 @@ private fun pullBack(progress: Float): Float {
 @Composable
 private fun QuickSwitchFace(
     tab: Tab,
+    chromeAmount: () -> Float,
     layer: GraphicsLayerScope.() -> Unit,
 ) {
     Box(
         Modifier
             .fillMaxSize()
             .graphicsLayer(layer)
+            // Inside the moving layer: each page carries its own frame and
+            // shadow instead of leaving stationary chrome behind.
+            .quickSwitchChrome98(chromeAmount)
             .background(PageBg),
     ) {
         val preview = tab.thumbnail
@@ -5356,6 +5539,37 @@ private fun QuickSwitchFace(
             ) {
                 TabLabelRow(tab = tab, width = maxWidth)
             }
+        }
+    }
+}
+
+@Composable
+private fun Modifier.quickSwitchChrome98(amount: () -> Float): Modifier {
+    if (!LocalNinety8.current) return this
+    val colors = bevel98Colors()
+    return drawWithContent {
+        val a = amount().coerceIn(0f, 1f)
+        if (a <= 0.004f) {
+            drawContent()
+            return@drawWithContent
+        }
+        val band = BEVEL_BAND.toPx()
+        val inset = (band * 2f * a).coerceAtMost(size.minDimension / 2f)
+
+        fun drawBand(topLeft: Color, bottomRight: Color, pad: Float) {
+            val width = (size.width - pad * 2f).coerceAtLeast(0f)
+            val height = (size.height - pad * 2f).coerceAtLeast(0f)
+            val thickness = band.coerceAtMost(width).coerceAtMost(height)
+            drawRect(topLeft.copy(alpha = topLeft.alpha * a), Offset(pad, pad), Size(width, thickness))
+            drawRect(topLeft.copy(alpha = topLeft.alpha * a), Offset(pad, pad + thickness), Size(thickness, (height - thickness).coerceAtLeast(0f)))
+            drawRect(bottomRight.copy(alpha = bottomRight.alpha * a), Offset(pad, pad + height - thickness), Size(width, thickness))
+            drawRect(bottomRight.copy(alpha = bottomRight.alpha * a), Offset(pad + width - thickness, pad), Size(thickness, (height - thickness).coerceAtLeast(0f)))
+        }
+
+        drawBand(colors.hilight, colors.dark, 0f)
+        drawBand(colors.light, colors.shadow, band)
+        clipRect(inset, inset, size.width - inset, size.height - inset) {
+            this@drawWithContent.drawContent()
         }
     }
 }
@@ -5404,14 +5618,28 @@ internal fun SystemBarIcons(
     val aero = com.yuku.browser.ui.theme.LocalAero.current
     SideEffect {
         val window = (view.context as? Activity)?.window ?: return@SideEffect
-        if (android.os.Build.VERSION.SDK_INT >= 29) window.isNavigationBarContrastEnforced = !aero
-        if (aero) {
+        if (android.os.Build.VERSION.SDK_INT >= 29) {
+            // The browser deliberately supplies the complete colour behind
+            // both transparent system bars. Leaving the platform's automatic
+            // status-bar contrast scrim enabled adds a black shade over that
+            // paint (most obvious as a green-to-black "gradient" on a site's
+            // solid masthead). Icon contrast is selected explicitly below.
+            window.isStatusBarContrastEnforced = false
+            // Same rule at the bottom: this window supplies the surface under
+            // the transparent navigation bar, and the platform scrim is the
+            // grey band that otherwise appears behind the gesture handle.
+            window.isNavigationBarContrastEnforced = false
+        }
+        // `enableEdgeToEdge()` establishes this initially, but system/theme
+        // changes can replace it. Reassert it for every browser look, not just
+        // Aero, or ordinary themes regain a grey navigation-bar background.
+        @Suppress("DEPRECATION")
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        @Suppress("DEPRECATION")
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
             @Suppress("DEPRECATION")
-            window.navigationBarColor = android.graphics.Color.TRANSPARENT
-            if (android.os.Build.VERSION.SDK_INT >= 28) {
-                @Suppress("DEPRECATION")
-                window.navigationBarDividerColor = android.graphics.Color.TRANSPARENT
-            }
+            window.navigationBarDividerColor = android.graphics.Color.TRANSPARENT
         }
         val controller = WindowCompat.getInsetsController(window, view)
         controller.isAppearanceLightStatusBars = when {
@@ -5457,6 +5685,8 @@ private fun PageCover(
             return@LaunchedEffect
         }
         delay(PAGE_COVER_MAX_MS)
+        // This is a visual watchdog, not a navigation deadline. A slow page
+        // remains allowed to finish after its stale preview is taken away.
         onGiveUp()
     }
     AnimatedVisibility(
@@ -5532,6 +5762,7 @@ private fun AnimatedThumbnailHost(
     stripAbovePx: Float = 0f,
     stripFadePx: Float = 0f,
     stripReports: kotlinx.coroutines.flow.StateFlow<Map<Long, com.yuku.browser.core.StatusStripReport>>? = null,
+    statusBarBlur: Boolean = true,
 ) {
     // Before the early return, so the paint (and its eased colours) outlives
     // the frames this stand-in is not shown.
@@ -5559,6 +5790,19 @@ private fun AnimatedThumbnailHost(
     Box(
         Modifier
             .fillMaxSize()
+            .ninety8ShrinkChrome(
+                visible = true,
+                targetRect = targetRect,
+                progress = progress,
+                offsetX = offsetX,
+                offsetY = offsetY,
+                belowPx = { width, height ->
+                    if (full != null && width > 0f) {
+                        (full.height * width / full.width - height).coerceAtLeast(0f)
+                    } else 0f
+                },
+                abovePx = stripAbovePx,
+            )
             .graphicsLayer {
                 val shrinkProgress = shrinkOf(progress())
                 val below = if (full != null && size.width > 0f) {
@@ -5579,7 +5823,11 @@ private fun AnimatedThumbnailHost(
                 if (stripPaint == null || stripAbovePx <= 0f) Modifier
                 else Modifier.drawWithContent {
                     drawContent()
-                    drawStatusStrip(stripPaint, stripAbovePx, stripFadePx, 1f - shrinkOf(progress()).coerceIn(0f, 1f))
+                    drawStatusStrip(
+                        stripPaint, stripAbovePx,
+                        1f - shrinkOf(progress()).coerceIn(0f, 1f),
+                        softenWipeEdge = statusBarBlur,
+                    )
                 }
             )
             .then(
@@ -6050,7 +6298,7 @@ private fun Destination(
 @Composable
 private fun Modifier.tuiShrinkOutline(targetRect: Rect?, progress: () -> Float, belowPx: Float, abovePx: Float = 0f): Modifier {
     if (!com.yuku.browser.ui.theme.LocalTui.current) return this
-    val ink = androidx.compose.material3.MaterialTheme.colorScheme.primary
+    val ink = Ink
     return drawWithContent {
         drawContent()
         val p = shrinkOf(progress()).coerceIn(0f, 1f)
@@ -6062,5 +6310,87 @@ private fun Modifier.tuiShrinkOutline(targetRect: Rect?, progress: () -> Float, 
         val left = (size.width - w) / 2f
         val top = g.windowTop(h)
         drawSoftRule(ink, 0.85f * p, left + sw / 2f, top + sw / 2f, w - sw, h - sw, sw, com.yuku.browser.ui.theme.SOFT_RULE_BLUR.toPx() / g.scale.coerceAtLeast(0.0001f))
+    }
+}
+
+/**
+ * The 98 frame around a page becoming a tab preview.
+ *
+ * This wraps the shrink layer instead of drawing inside it. That gives it the
+ * final screen-space crop rectangle—including the independently growing
+ * status-bar strip—so the top edge follows the preview's faster expansion.
+ * The frame is painted first and the page is clipped inward over it: chrome
+ * stays underneath page pixels while being progressively revealed.
+ */
+@Composable
+private fun Modifier.ninety8ShrinkChrome(
+    visible: Boolean,
+    targetRect: Rect?,
+    progress: () -> Float,
+    offsetX: () -> Float,
+    offsetY: () -> Float,
+    belowPx: (width: Float, height: Float) -> Float,
+    abovePx: Float = 0f,
+): Modifier {
+    if (!LocalNinety8.current || !visible) return this
+    val colors = bevel98Colors()
+    return drawWithContent {
+        val p = shrinkOf(progress()).coerceIn(0f, 1f)
+        if (p <= 0.004f) {
+            drawContent()
+            return@drawWithContent
+        }
+
+        val g = shrinkGeometry(size.width, size.height, targetRect, p, belowPx(size.width, size.height), abovePx)
+        val localWidth = g.windowWidth.coerceIn(0f, size.width)
+        val localHeight = g.windowHeight.coerceIn(0f, g.pictureHeight)
+        if (localWidth <= 0f || localHeight <= 0f) {
+            drawContent()
+            return@drawWithContent
+        }
+        val scale = g.scale.coerceAtLeast(0.0001f)
+        val localLeft = (size.width - localWidth) / 2f
+        val localTop = g.windowTop(localHeight)
+        val translationY = offsetY() - (g.below - g.above) / 2f * scale * p
+        val left = size.width / 2f + (localLeft - size.width / 2f) * scale + offsetX()
+        val top = size.height / 2f + (localTop - size.height / 2f) * scale + translationY
+        val width = localWidth * scale
+        val height = localHeight * scale
+        val bandPx = BEVEL_BAND.toPx()
+
+        // The top of a transparent-status-bar page reaches the screen edge
+        // before the other three sides reach fullscreen. Fade and cover that
+        // edge from its actual remaining travel, so it vanishes on arrival
+        // instead of hanging over the status bar until global progress is 0.
+        val targetTop = targetRect?.top ?: 0f
+        val topAmount = if (targetTop > 1f) (top / targetTop).coerceIn(0f, 1f) else p
+
+        fun drawBand(topLeft: Color, bottomRight: Color, inset: Float) {
+            val innerWidth = (width - inset * 2f).coerceAtLeast(0f)
+            val innerHeight = (height - inset * 2f).coerceAtLeast(0f)
+            if (innerWidth <= 0f || innerHeight <= 0f) return
+            val thickness = bandPx.coerceAtMost(innerWidth).coerceAtMost(innerHeight)
+            drawRect(topLeft.copy(alpha = topLeft.alpha * topAmount), Offset(left + inset, top + inset), Size(innerWidth, thickness))
+            drawRect(topLeft.copy(alpha = topLeft.alpha * p), Offset(left + inset, top + inset + thickness), Size(thickness, (innerHeight - thickness).coerceAtLeast(0f)))
+            drawRect(bottomRight.copy(alpha = bottomRight.alpha * p), Offset(left + inset, top + inset + innerHeight - thickness), Size(innerWidth, thickness))
+            drawRect(bottomRight.copy(alpha = bottomRight.alpha * p), Offset(left + inset + innerWidth - thickness, top + inset), Size(thickness, (innerHeight - thickness).coerceAtLeast(0f)))
+        }
+
+        drawBand(colors.hilight, colors.dark, 0f)
+        drawBand(colors.light, colors.shadow, bandPx)
+
+        // Reveal the frame from underneath by pulling the preview's edge in
+        // on the same curve. At the card endpoint this is exactly the inset
+        // used by TabCard; at fullscreen it is zero.
+        val previewInset = (bandPx * 2f * p).coerceAtMost(width / 2f).coerceAtMost(height / 2f)
+        val previewTopInset = (bandPx * 2f * topAmount).coerceAtMost(height / 2f)
+        clipRect(
+            left = left + previewInset,
+            top = top + previewTopInset,
+            right = left + width - previewInset,
+            bottom = top + height - previewInset,
+        ) {
+            this@drawWithContent.drawContent()
+        }
     }
 }

@@ -76,6 +76,7 @@ import com.yuku.browser.ui.theme.Text
 import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
@@ -614,7 +615,7 @@ fun CustomTabScreen(
     // Read as a boolean off the animated offset, so the header moving every
     // frame does not put a script evaluation on every frame with it.
     val headerFullyUp by remember { derivedStateOf { headerSlide.value == 0f } }
-    LaunchedEffect(headerPx, headerFullyUp) {
+    SideEffect {
         vm.setPageTopInset(headerPx.toInt(), if (headerFullyUp) headerPx.toInt() else 0)
     }
 
@@ -640,6 +641,7 @@ fun CustomTabScreen(
                         // this box, i.e. from behind the header, and travel
                         // most of its way down before appearing at all.
                         topInset = HEADER_HEIGHT,
+                        barInset = if (headerFullyUp) HEADER_HEIGHT else 0.dp,
                         onScroll = { d, y -> onPageScroll(d, y) },
                     )
                 }
@@ -1376,6 +1378,7 @@ private fun CustomTabPage(
     vm: BrowserViewModel,
     tab: Tab,
     topInset: Dp,
+    barInset: Dp,
     onScroll: (deltaY: Int, scrollY: Int) -> Unit,
 ) {
     val pullToRefresh by vm.pullToRefreshEnabled.collectAsStateWithLifecycle()
@@ -1412,6 +1415,12 @@ private fun CustomTabPage(
             swipeRefresh.setColorSchemeColors(spinnerArgb)
             swipeRefresh.setProgressBackgroundColorSchemeColor(spinnerBgArgb)
             if (!tab.loading) swipeRefresh.isRefreshing = false
+            // `webViewFor` attaches the document-start bridge and starts a
+            // fresh navigation. Seed its header room before that happens so
+            // the first page layout is not corrected after its first paint.
+            val topInsetPx = with(density) { topInset.roundToPx() }
+            val barInsetPx = with(density) { barInset.roundToPx() }
+            vm.setPageTopInset(topInsetPx, barInsetPx)
             val web = vm.webViewFor(tab)
             if ((web.background as? ColorDrawable)?.color != pageBgArgb) {
                 web.setBackgroundColor(pageBgArgb)

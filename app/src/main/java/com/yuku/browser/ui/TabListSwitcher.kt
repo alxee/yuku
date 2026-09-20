@@ -37,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -127,6 +128,7 @@ import com.yuku.browser.ui.theme.specialCorner
 fun TabListSwitcher(
     tabs: List<Tab>,
     currentId: Long,
+    sessionKey: Int,
     // Whether the switcher is the thing on screen. Not `progress` — this
     // surface has its own entrance and takes nothing from the page's shrink,
     // which in this mode does not happen at all.
@@ -271,7 +273,55 @@ fun TabListSwitcher(
             if (!fullScreen) 0
             else newestFirst.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
         }
-        val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
+        val listState = key(sessionKey) {
+            rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
+        }
+
+        // Aero, sheet sized to its tabs: an upward overscroll on the rows is
+        // our own pull, drawn as the rows bending into the sheet's top edge
+        // through the glass (aeroOverscrollBendIf) rather than the platform
+        // stretch, which ran past the sheet's clip and was cropped. Downward
+        // leftovers stay the sheet's own dismissal (see `nested`).
+        val bendOverscroll = aero && !fullScreen &&
+            android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU
+        val overPull = remember { Animatable(0f) }
+        val bendMaxPx = with(density) { BEND_MAX_PULL.toPx() }
+        // Rubber band: the finger's raw travel, eased toward a ceiling.
+        val overPullShown: () -> Float = {
+            val raw = overPull.value
+            if (raw <= 0f) 0f else bendMaxPx * (1f - kotlin.math.exp(-raw / bendMaxPx))
+        }
+        val overPullConnection = remember {
+            object : NestedScrollConnection {
+                override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                    // Finger back down while pulled: give the pull back first.
+                    val dy = available.y
+                    val current = overPull.value
+                    if (dy <= 0f || current <= 0f || source != NestedScrollSource.UserInput) return Offset.Zero
+                    val used = min(dy, current)
+                    scope.launch { overPull.snapTo(current - used) }
+                    return Offset(0f, used)
+                }
+
+                override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+                    val dy = available.y
+                    if (dy >= 0f || source != NestedScrollSource.UserInput) return Offset.Zero
+                    scope.launch { overPull.snapTo(overPull.value - dy) }
+                    return Offset(0f, dy)
+                }
+
+                override suspend fun onPreFling(available: Velocity): Velocity {
+                    if (overPull.value > 0f) {
+                        // Settles at 0 without passing it: past 0 is rows
+                        // bending the other way (see Motion's overshoot rule).
+                        scope.launch {
+                            overPull.animateTo(0f, tween(SNAP_BACK_MS, easing = androidx.compose.animation.core.FastOutSlowInEasing))
+                        }
+                    }
+                    return Velocity.Zero
+                }
+            }
+        }
 
         LaunchedEffect(open) {
             if (open) slide.animateTo(0f, arrive(SURFACE_ENTER_MS))
@@ -412,7 +462,12 @@ fun TabListSwitcher(
                 val guardedTop = top + delta.coerceAtLeast(0f) * PANE_LAG_FRAMES
                 val guardedBottom = bottom + delta.coerceAtMost(0f) * PANE_LAG_FRAMES
                 if (guardedBottom <= guardedTop) return@rect Rect.Zero
-                Rect(left, guardedTop, left + w, guardedBottom)
+                // The frost pass rounds all four corners of this rect, but the
+                // sheet is square where it meets the toolbar (its own bottom
+                // corners are clipped away there). Carried a corner's depth on
+                // under the bar, where they are out of sight.
+                val under = if (aero) 0f else with(density) { SHEET_CORNER.toPx() }
+                Rect(left, guardedTop, left + w, guardedBottom + under)
             }
             paneBounds?.fade = fade@{
                 if (fadeBandPx <= 0f) return@fade Offset.Zero
@@ -421,7 +476,7 @@ fun TabListSwitcher(
                 // frost must be gone at the bar's top edge; otherwise the
                 // glass makes a rectangular remnant visible behind the bar.
                 val barTop = parent.localToRoot(Offset.Zero).y + parent.size.height - bottomInsetPx
-                Offset(barTop - fadeBandPx, barTop)
+                Offset(barTop - 1f, barTop)
             }
         }
 
@@ -588,7 +643,13 @@ fun TabListSwitcher(
                 },
         )
 
-        val cornerPx = with(density) { SHEET_CORNER.toPx() } * SpecialCornerScale
+        // Nothing caps corners at 16dp (see specialCorner) — a scale cannot,
+        // and the frost under this sheet is already cut at the capped radius,
+        // so an uncapped 28dp clip left frosted page showing past the corner.
+        val cornerPx = with(density) {
+            (if (com.yuku.browser.ui.theme.LocalNothing.current) minOf(SHEET_CORNER, com.yuku.browser.ui.theme.NOTHING_MAX_CORNER)
+            else SHEET_CORNER).toPx()
+        } * SpecialCornerScale
         val cornerFillPx = with(density) { CORNER_FILL_DISTANCE.toPx() }
         // The corner only flattens against the top of the SCREEN, and it only
         // reaches it when the sheet is full-bleed: turned sideways the sheet
@@ -858,11 +919,20 @@ fun TabListSwitcher(
                     )
                 }
 
+                @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+                androidx.compose.runtime.CompositionLocalProvider(
+                    // Aero, sheet sized to its tabs: our own bend replaces the
+                    // platform stretch, which the sheet's clip cropped.
+                    androidx.compose.foundation.LocalOverscrollConfiguration provides
+                        if (bendOverscroll) null else androidx.compose.foundation.LocalOverscrollConfiguration.current,
+                ) {
                 LazyColumn(
                     state = listState,
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
+                        .then(if (bendOverscroll) Modifier.nestedScroll(overPullConnection) else Modifier)
+                        .aeroOverscrollBendIf(enabled = bendOverscroll, pull = { overPullShown() })
                         // Aero: rows bend away at an edge with more tabs past
                         // it, like the curve of a tube, instead of being cut.
                         // A content-fitting sheet may report a pixel or two of
@@ -936,6 +1006,7 @@ fun TabListSwitcher(
                             }
                         }
                     }
+                }
                 }
             }
             }
@@ -1317,6 +1388,113 @@ private const val CRT_EDGES_SHADER = """
     }
 """
 
+/**
+ * Aero's overscroll on a sheet that fits its tabs: the rows ride up with the
+ * finger by [pull] (already rubber-banded) and, instead of running past the
+ * sheet's top and being cropped, bend into a band at the top edge — squeezed
+ * toward it so every row stays inside the glass — with the glass's refraction
+ * on the bent part: a slight inward pinch, a colour split along the bend and a
+ * specular glint at the rim.
+ *
+ * API 33 (RuntimeShader); a no-op below it or if the shader fails to build.
+ */
+@Composable
+private fun Modifier.aeroOverscrollBendIf(enabled: Boolean, pull: () -> Float): Modifier {
+    if (!enabled || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return this
+    val shader = remember {
+        runCatching { android.graphics.RuntimeShader(AERO_BEND_SHADER) }
+            .onFailure { android.util.Log.e("TabListSwitcher", "Aero bend shader failed", it) }
+            .getOrNull()
+    } ?: return this
+    return this.graphicsLayer {
+        val p = pull()
+        if (p <= 0.5f || size.width <= 0f || size.height <= 0f) {
+            renderEffect = null
+            return@graphicsLayer
+        }
+        shader.setFloatUniform("size", size.width, size.height)
+        shader.setFloatUniform("band", BEND_BAND.toPx())
+        shader.setFloatUniform("pull", p)
+        shader.setFloatUniform("maxPull", BEND_MAX_PULL.toPx())
+        shader.setFloatUniform("split", 1.5.dp.toPx())
+        shader.setFloatUniform("blur", BEND_BLUR.toPx())
+        renderEffect = android.graphics.RenderEffect
+            .createRuntimeShaderEffect(shader, "content")
+            .asComposeRenderEffect()
+    }
+}
+
+private const val AERO_BEND_SHADER = """
+    uniform shader content;
+    uniform float2 size;
+    uniform float band;
+    uniform float pull;
+    uniform float maxPull;
+    uniform float split;
+    uniform float blur;
+    half4 tap(float2 q) {
+        return content.eval(float2(clamp(q.x, 0.0, size.x), clamp(q.y, 0.0, size.y)));
+    }
+    half4 main(float2 p) {
+        float k = clamp(pull / maxPull, 0.0, 1.0);
+        float sy = p.y + pull;
+        float w = 0.0;
+        if (p.y < band) {
+            // Source runs from the content's top at the edge to 1:1 at the
+            // band's inner end, matched in slope there, with the squeeze
+            // spent mostly against the rim: s(d) = d + pull(1 - (1-t)³).
+            // A curve, not a ramp — a ramp across a whole row reads as the
+            // row tilting away rather than wrapping round an edge.
+            float t = p.y / band;
+            float u = 1.0 - t;
+            sy = p.y + pull * (1.0 - u * u * u);
+            w = u * u * k;
+        }
+        if (sy > size.y) return half4(0.0);
+        float cx = size.x * 0.5;
+        float sx = cx + (p.x - cx) * (1.0 + 0.05 * w * w);
+        if (sx < 0.0 || sx > size.x) return half4(0.0);
+        float d = split * w;
+        // Blur grows into the bend: 9 taps along the squeezed axis (where
+        // the rows are compressed), a little across.
+        float rad = blur * w;
+        half4 c = half4(0.0);
+        half4 r = half4(0.0);
+        half4 b = half4(0.0);
+        if (rad < 0.5) {
+            c = tap(float2(sx, sy));
+            r = tap(float2(sx, sy - d));
+            b = tap(float2(sx, sy + d));
+        } else {
+            half total = 0.0;
+            for (int i = -4; i <= 4; i++) {
+                float f = float(i) / 4.0;
+                half g = half(exp(-2.0 * f * f));
+                float2 q = float2(sx + f * rad * 0.35, sy + f * rad);
+                c += tap(q) * g;
+                r += tap(q - float2(0.0, d)) * g;
+                b += tap(q + float2(0.0, d)) * g;
+                total += g;
+            }
+            c /= total; r /= total; b /= total;
+        }
+        half4 o = half4(r.r, c.g, b.b, max(max(r.a, c.a), b.a));
+        // Glint along the rim, only where there is glass-covered content.
+        half glint = half(w * w * 0.22);
+        o.rgb += o.a * glint;
+        return o;
+    }
+"""
+
+/** Where the overscroll bend is spent, measured in from the sheet's top. */
+private val BEND_BAND = 36.dp
+
+/** Blur radius at the rim, fading to none at the band's inner end. */
+private val BEND_BLUR = 6.dp
+
+/** The rubber band's ceiling: how far the rows can be pulled. */
+private val BEND_MAX_PULL = 40.dp
+
 /** How far in from a list edge the curvature reaches. */
 private val CRT_EDGE_BAND = 36.dp
 
@@ -1382,8 +1560,10 @@ private const val AERO_TOOLBAR_FADE_SHADER = """
     }
 
     half4 main(float2 p) {
+        // A hard, antialiased edge on the toolbar's outline — the sheet goes
+        // UNDER the bar, the bar's rounded corners already in place beside it.
         float edge = toolbarTop(p.x);
-        float alpha = clamp((edge - p.y) / fadeBand, 0.0, 1.0);
+        float alpha = clamp(edge - p.y + 0.5, 0.0, 1.0);
         return content.eval(p) * half(alpha);
     }
 """

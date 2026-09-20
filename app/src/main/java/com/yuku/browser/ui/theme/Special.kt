@@ -143,18 +143,13 @@ val SpecialCircle: Shape @Composable
  * The accent thinned to a WASH — a tint behind or beneath something, rather
  * than a mark drawn in the accent itself.
  *
- * The one use of colour the Nothing theme refuses. A yellow glyph or a yellow
- * track is that theme working as intended: colour as an interrupt, spent on
- * one thing. A yellow spread thinly under a tile, a chip or a whole empty
- * canvas is the opposite — a hue lying across the canvas, which is what
- * "monochrome is the canvas" rules out — so there the accent gives way to
- * the ink and the emphasis is carried by value instead.
- *
- * Every other theme gets exactly what it always got.
+ * Nothing used to refuse it and hand back ink. It no longer does: that theme
+ * differs from the ordinary one in colour only by its CANVAS staying neutral
+ * (see `nothingElementsTinted`), and a wash under a tile or chip is an
+ * element, not the canvas.
  */
 @Composable
-fun accentWash(alpha: Float): Color =
-    if (LocalNothing.current) Ink.copy(alpha = alpha) else AccentColor.copy(alpha = alpha)
+fun accentWash(alpha: Float): Color = AccentColor.copy(alpha = alpha)
 
 /** The largest corner Nothing draws: see [specialCorner]. */
 internal val NOTHING_MAX_CORNER = 16.dp

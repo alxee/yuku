@@ -134,28 +134,11 @@ private object Silver {
     // edge colours have to fit between the face and the two ends, and a
     // face sitting at the middle grey leaves them nowhere to go.
     //
-    // The blue is the one thing that could not simply be darkened with the
-    // rest, and it took two passes to land. It started as a pale
-    // cyan-leaning sky blue (#3B8FD8: hue 207, 66% saturation), and losing
-    // a third of the saturation is exactly what makes a colour read pastel.
-    // Putting it back at the navy's OWN hue — 240, full saturation — fixed
-    // the pastel and broke something else: hue 240 is the corner of the
-    // sRGB cube where blue stops being blue, so a #7070FF lifted off it
-    // came out VIOLET. Navy gets away with 240 only because it is dark;
-    // lightness is what lets the red channel show, and at any tone bright
-    // enough to be ink on a dark face it shows as purple.
-    //
-    // So the dark accent sits at hue 229 — the blue side of the navy rather
-    // than the cyan side the first one drifted to — at full saturation and
-    // the lowest lightness that still reads as ink. #000080 itself is not
-    // available here: it measures 1.1:1 against the face above, and this
-    // app spends its accent on INK as often as on a fill (headers, ticks,
-    // active glyphs) where Windows only ever used navy as a ground with
-    // white on it. This measures 3.9:1 against the face, better than the
-    // sky blue managed on the lighter face it sat on.
-
-    val desktopDark = Color(0xFF001E1F)
-    val desktopGlyphDark = Color(0xFF0A2C2D)
+    // The desktop teal and title-bar blue are the theme's identity, not
+    // illumination. Keep both fixed across light and dark chrome so changing
+    // mode darkens the windows without changing the desktop or active state.
+    val desktopDark = desktop
+    val desktopGlyphDark = desktopGlyph
 
     val faceDark = Color(0xFF1E1E1E)
     val faceLightDark = Color(0xFF303030)
@@ -169,11 +152,9 @@ private object Silver {
     val grayTextDark = Color(0xFF9C9C9C)
     val grayTextFaintDark = Color(0xFF6F6F6F)
 
-    /** The navy's hue and saturation, at the lightness a dark face needs. */
-    val navyDark = Color(0xFF4A6CFF)
+    val navyDark = navy
 
-    /** The caption gradient's far end, the same distance from it as in light. */
-    val navyBrightDark = Color(0xFF7E99FF)
+    val navyBrightDark = navyBright
 
     val navyPaleDark = Color(0xFF101B45)
 
@@ -242,11 +223,11 @@ internal val Ninety8LightScheme: ColorScheme = lightColorScheme(
 
 internal val Ninety8DarkScheme: ColorScheme = darkColorScheme(
     primary = Silver.navyDark,
-    onPrimary = Silver.windowDark,
+    onPrimary = Silver.hilight,
     primaryContainer = Silver.navyPaleDark,
-    onPrimaryContainer = Silver.navyBrightDark,
+    onPrimaryContainer = Silver.hilight,
     secondary = Silver.navyBrightDark,
-    onSecondary = Silver.windowDark,
+    onSecondary = Silver.hilight,
     secondaryContainer = Silver.faceLightDark,
     onSecondaryContainer = Silver.textDark,
     tertiary = Silver.desktopGlyphDark,
@@ -507,7 +488,10 @@ enum class Bevel {
  * looks like — and rounding it off would be tidying away the thing itself.
  */
 @Composable
-fun Modifier.bevel98(style: Bevel = Bevel.Raised, inset: Dp = 0.dp): Modifier {
+fun Modifier.bevel98(
+    style: Bevel = Bevel.Raised,
+    inset: Dp = 0.dp,
+): Modifier {
     val colors = bevel98Colors()
     val thin = style == Bevel.RaisedThin || style == Bevel.SunkenThin
     val flipped = style == Bevel.Sunken || style == Bevel.SunkenThin
@@ -565,7 +549,10 @@ private fun DrawScope.drawBevelBand(
  * branch and `SpecialText` the casing one.
  */
 @Composable
-fun Modifier.bevel98If(style: Bevel = Bevel.Raised, inset: Dp = 0.dp): Modifier =
+fun Modifier.bevel98If(
+    style: Bevel = Bevel.Raised,
+    inset: Dp = 0.dp,
+): Modifier =
     if (LocalNinety8.current) bevel98(style, inset) else this
 
 /** How thick one band of a bevel is drawn — see [Modifier.bevel98]. */

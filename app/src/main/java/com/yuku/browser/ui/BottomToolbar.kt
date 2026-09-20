@@ -17,6 +17,8 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -71,9 +73,10 @@ import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.compose.material3.MaterialTheme
 import com.yuku.browser.ui.theme.AccentColor
-import com.yuku.browser.ui.theme.frostedAccentIf
 import com.yuku.browser.ui.theme.BarBg
 import com.yuku.browser.ui.theme.HairLine
 import com.yuku.browser.ui.theme.Ink
@@ -82,6 +85,7 @@ import com.yuku.browser.ui.theme.Bevel
 import com.yuku.browser.ui.theme.LocalNinety8
 import com.yuku.browser.ui.theme.LocalNothing
 import com.yuku.browser.ui.theme.LocalTui
+import com.yuku.browser.ui.theme.TuiMonoFamily
 import com.yuku.browser.ui.theme.Glassy
 import com.yuku.browser.ui.theme.LocalAero
 import com.yuku.browser.ui.theme.aeroGlassIf
@@ -273,6 +277,7 @@ fun BottomToolbar(
     val ninety8 = LocalNinety8.current
     val aero = LocalAero.current
     val nothing = LocalNothing.current
+    val tui = LocalTui.current
     // A Windows toolbar is not separated from what is under it by a line, it
     // is RAISED off it — one lit band along its top edge, which is the same
     // hairline's worth of pixels saying something else with them. The bevel
@@ -659,7 +664,7 @@ fun BottomToolbar(
             // the line simply appears/disappears on top of it.
             // Under Aero the line is the bar's own lit edge, so it gets the
             // whole bar to trace (see [AeroLoadingRim]).
-            if (!nothing) {
+            if (!nothing && !tui && !ninety8) {
                 LoadingLine(
                     loading = loading,
                     progress = progress,
@@ -669,26 +674,34 @@ fun BottomToolbar(
             }
         }
     }
-    // Nothing's ruler is taller than a rule and would run into the + oval, so
-    // it gets a band of its own ABOVE the bar, outside the Surface (which
-    // clips) and reporting zero height, so it never changes the toolbar's
-    // measured size — the page's bottom inset is read off that, and a band
-    // growing through layout would resize the page on every frame.
-    if (nothing) {
+    // These strips report zero height, so they never change the toolbar's
+    // measured size. The 98 well is also stacked BEHIND the navbar: while it
+    // rises and retracts, the navbar masks the part that has not crossed its
+    // top edge yet instead of letting the control paint over the bar's face.
+    if (nothing || tui || ninety8) {
+        val stripHeight = when {
+            nothing -> LOAD_RULER_STRIP
+            tui -> LOAD_TUI_HASH_HEIGHT
+            else -> LOAD_WELL_HEIGHT
+        }
         LoadingLine(
             loading = loading,
             progress = progress,
             bezel = bezel,
             modifier = Modifier
                 .align(Alignment.TopStart)
+                .then(if (ninety8) Modifier.zIndex(-1f) else Modifier)
                 .fillMaxWidth()
                 .layout { measurable, constraints ->
                     val placeable = measurable.measure(
-                        constraints.copy(minHeight = 0, maxHeight = LOAD_RULER_STRIP.roundToPx()),
+                        constraints.copy(
+                            minHeight = 0,
+                            maxHeight = stripHeight.roundToPx(),
+                        ),
                     )
                     layout(placeable.width, 0) { placeable.place(0, -placeable.height) }
                 }
-                .height(LOAD_RULER_STRIP),
+                .height(stripHeight),
             wrapBar = false,
         )
     }
@@ -888,8 +901,9 @@ private fun ToolbarWord(word: String) {
  */
 @Composable
 private fun NothingNewTabGlyph() {
-    // Translucent sheets: the oval lets the frosted bar through a little.
-    val fill = AccentColor.frostedAccentIf()
+    // Always opaque, translucent sheets or not: the oval is the one key the
+    // bar is built around, and a see-through one reads as a hole in it.
+    val fill = AccentColor
     val mark = MaterialTheme.colorScheme.onPrimary
     Canvas(
         Modifier
@@ -1089,6 +1103,15 @@ internal fun LoadingLine(
     val aero = LocalAero.current
     val cells = loadingCells(nothing = nothing, tui = tui, ninety8 = ninety8, aero = aero)
     val accent = AccentColor
+    if (tui) {
+        TuiHashLoading(
+            fraction = { fraction.value },
+            alpha = { alpha.value },
+            color = Ink,
+            modifier = modifier,
+        )
+        return
+    }
     if (aero && wrapBar) {
         AeroLoadingRim(
             fraction = { fraction.value },
@@ -1101,6 +1124,13 @@ internal fun LoadingLine(
         return
     }
     if (cells.tick) {
+        // The band sits ABOVE the bar, outside the page region frosted for
+        // it, so it hands its reveal to the frost pass; see [RulerBand].
+        val reveal = remember { { alpha.value } }
+        androidx.compose.runtime.DisposableEffect(reveal) {
+            RulerBand.reveal = reveal
+            onDispose { if (RulerBand.reveal === reveal) RulerBand.reveal = RulerBand.Hidden }
+        }
         RulerLoading(
             fraction = { fraction.value },
             alpha = { alpha.value },
@@ -1138,7 +1168,14 @@ internal fun LoadingLine(
         modifier = modifier
             .fillMaxWidth()
             .height(cells.height)
-            .graphicsLayer { this.alpha = alpha.value }
+            .graphicsLayer {
+                val reveal = alpha.value.coerceIn(0f, 1f)
+                this.alpha = reveal
+                // The 98 well is mounted just above the toolbar. Move the
+                // complete control, including its face-colour track and
+                // bevel, so it rises out of the navbar and returns there.
+                if (ninety8) translationY = cells.height.toPx() * (1f - reveal)
+            }
             .then(track)
             // Drawn after the content, so the well's edge stays on top of the
             // chunks that fill it.
@@ -1177,6 +1214,63 @@ internal fun LoadingLine(
     }
 }
 
+/** A compact terminal progress readout, written as a run of real `#` cells. */
+@Composable
+private fun TuiHashLoading(
+    fraction: () -> Float,
+    alpha: () -> Float,
+    color: Color,
+    modifier: Modifier,
+) {
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(LOAD_TUI_HASH_HEIGHT)
+            .graphicsLayer {
+                val reveal = alpha().coerceIn(0f, 1f)
+                this.alpha = reveal
+                // The marks rise out of the toolbar as loading begins and
+                // fall back into it after completion, like Nothing's ruler.
+                translationY = LOAD_TUI_HASH_HEIGHT.toPx() * (1f - reveal)
+            }
+            // These sit INSIDE the moving layer: the terminal band and its
+            // marks rise and fall as one object, rather than leaving a static
+            // fill behind when the hashes move.
+            // Same ground as the navbar. Kept flat here so the separately
+            // tiled texture cannot create a visible seam at the moving edge.
+            .background(BarBg)
+            .clipToBounds(),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        // Compose individual characters so the first and last marks have the
+        // same inset from the screen edge, at any width.
+        val total = (maxWidth.value / LOAD_TUI_HASH_PITCH.value).toInt().coerceIn(21, 42)
+        val filled = (fraction().coerceIn(0f, 1f) * total).toInt().coerceIn(0, total)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = LOAD_TUI_HASH_INSET),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            repeat(total) { index ->
+                Text(
+                    text = "#",
+                    // Keep every slot in the row from the start; revealing
+                    // only its ink makes the run fill left to right while the
+                    // first and last positions stay pinned to the same edges.
+                    color = if (index < filled) color else Color.Transparent,
+                    fontFamily = TuiMonoFamily,
+                    fontSize = 8.sp,
+                    lineHeight = 8.sp,
+                    modifier = Modifier.tuiBloomIf(strength = 0.7f),
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
 /**
  * How one look breaks the loading run up, and how tall it draws it.
  *
@@ -1195,11 +1289,9 @@ internal fun LoadingLine(
  *   Nothing partial is ever drawn: a dot is lit or it is not, which is what
  *   makes the arrival of the next one an event, and a clipped dot is not a
  *   dot ([LoadingCells.dot] drops it rather than drawing an egg).
- * - **TUI** counts in CHARACTERS. A terminal's progress bar is one unbroken
- *   run of cells — `####    ` — with no gap between them, because it is being
- *   written into a text grid where a gap would be a space character. So the
- *   bar stays a single continuous line and only its LENGTH is quantised,
- *   advancing a whole cell at a time.
+ * - **TUI** counts in literal `#` characters. A compact text run is closer to
+ *   a terminal's progress readout than a drawn rectangle, and each new mark
+ *   still arrives as a whole cell.
  * - **98** is a Windows progress control, which is a sunken well with a row
  *   of separate blocks stepping across it. Its chunks are the chunkiest of
  *   the three and it is the only one with a border, because in that system a
@@ -1557,6 +1649,19 @@ private fun RulerLoading(
  * hanging in a 12dp band (hairline, 8dp tick, 3dp of air under it).
  */
 private val LOAD_RULER_STRIP = 12.dp
+
+/**
+ * How far Nothing's ruler band has risen out of the bar, for the frosted
+ * toolbar's page region: the band's ground is the bar's translucent fill, and
+ * without the region reaching up over it the page showed through sharp.
+ * SNAPSHOT state holding the lambda, so a frost layer that first ran with no
+ * band re-runs when one arrives (see `ListPaneBounds.rect`).
+ */
+internal object RulerBand {
+    val Hidden: () -> Float = { 0f }
+    var reveal: () -> Float by mutableStateOf(Hidden)
+    val height = LOAD_RULER_STRIP
+}
 /** An unreached major tick's accent alpha. */
 private const val LOAD_TICK_MAJOR_UNLIT = 0.35f
 private val LOAD_TICK_WIDTH = 1.dp
@@ -1580,6 +1685,9 @@ private val LOAD_DOT_GAP = LOAD_DOT
 
 /** The TUI's cell, which is a character's worth of a run with no gap in it. */
 private val LOAD_TUI_CELL = 9.dp
+private val LOAD_TUI_HASH_HEIGHT = 10.dp
+private val LOAD_TUI_HASH_INSET = 3.dp
+private val LOAD_TUI_HASH_PITCH = 8.dp
 
 /** Aero's well: deep enough for a gloss and its hard terminator to both show. */
 private val LOAD_AERO_HEIGHT = 6.dp

@@ -10,6 +10,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -45,6 +46,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -56,6 +58,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -63,6 +66,7 @@ import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.LayoutCoordinates
@@ -81,6 +85,8 @@ import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.zIndex
 import com.yuku.browser.core.Tab
 import com.yuku.browser.ui.theme.Ink
+import com.yuku.browser.ui.theme.BEVEL_BAND
+import com.yuku.browser.ui.theme.LocalNinety8
 import com.yuku.browser.ui.theme.PageBg
 import com.yuku.browser.ui.theme.aeroGlassIf
 import com.yuku.browser.ui.theme.aeroDroplet
@@ -166,6 +172,7 @@ private data class DraggedCard(val tab: Tab, val baseRect: Rect, val width: Dp, 
 fun TabSwitcher(
     tabs: List<Tab>,
     currentId: Long,
+    sessionKey: Int,
     floatingTabId: Long,
     freezeRowForExpansion: Boolean,
     progress: () -> Float,
@@ -196,6 +203,7 @@ fun TabSwitcher(
     // shortened under a running scroll animation blanks the whole row.
     onCloseRecentred: () -> Unit = {},
 ) {
+    val ninety8 = LocalNinety8.current
     // "Close all" is only worth offering once there are enough tabs that
     // hunting one down individually (or just eyeballing the row) stops being
     // the faster option — for a handful of tabs it's more likely to catch a
@@ -209,7 +217,9 @@ fun TabSwitcher(
     val initialIndex = remember(tabs, currentId, itemIndexOffset) {
         tabs.indexOfFirst { it.id == currentId }.coerceAtLeast(0) + itemIndexOffset
     }
-    val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
+    val listState = key(sessionKey) {
+        rememberLazyListState(initialFirstVisibleItemIndex = initialIndex)
+    }
     // The row can be scrolled without changing currentId. Expansion must
     // follow the card the user is looking at in the center, not whichever tab
     // happened to be selected before that scroll.
@@ -387,7 +397,8 @@ fun TabSwitcher(
     // Handed to the cards for their TUI outline and glow, which fade in with
     // the page's shrink. A plain holder, not a parameter threaded through
     // TabCard, and read only in draw — see [SwitcherShrink].
-    SideEffect { SwitcherShrink.amount = { shrinkOf(progress()).coerceIn(0f, 1f) } }
+    val switcherShrink: () -> Float = { shrinkOf(progress()).coerceIn(0f, 1f) }
+    SideEffect { SwitcherShrink.amount = switcherShrink }
     val stripUpDp = with(androidx.compose.ui.platform.LocalDensity.current) { PageTopStrip.px.toDp() }
     BoxWithConstraints(
         modifier = Modifier
@@ -961,7 +972,7 @@ fun TabSwitcher(
                         .tuiGlowAroundIf { (1f + dragOffsetY.value / (maxHeightPx * 0.5f)).coerceIn(0f, 1f) }
                         .shadow(if (com.yuku.browser.ui.theme.LocalAero.current) 10.dp else 0.dp, specialCorner(16.dp), clip = false)
                         .clip(specialCorner(16.dp))
-                        .grainedBackground(if (dc.tab.isPrivate) Color(0xFF121212) else PageBg)
+                        .background(if (ninety8) MaterialTheme.colorScheme.surface else Color.Transparent)
                         // The card being dragged is the same window as the
                         // one it was lifted out of — see the TabCard above.
                         .bevel98If()
@@ -971,17 +982,24 @@ fun TabSwitcher(
                     val full = dc.tab.thumbnailFull?.takeIf {
                         (com.yuku.browser.ui.theme.LocalAero.current || com.yuku.browser.ui.theme.LocalFrosted.current) && !it.isRecycled
                     }
-                    (full ?: dc.tab.thumbnail)?.let { bitmap ->
-                        PagePreviewImage(
-                            bitmap = bitmap,
-                            centred = full != null,
-                            // The card being dragged bends its page exactly
-                            // as the one it was lifted out of does.
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .privatePreview(dc.tab.isPrivate)
-                                .aeroRefractIf(16.dp),
-                        )
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .previewInset98If(ninety8)
+                            .grainedBackground(if (dc.tab.isPrivate) Color(0xFF121212) else PageBg),
+                    ) {
+                        (full ?: dc.tab.thumbnail)?.let { bitmap ->
+                            PagePreviewImage(
+                                bitmap = bitmap,
+                                centred = full != null,
+                                // The card being dragged bends its page exactly
+                                // as the one it was lifted out of does.
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .privatePreview(dc.tab.isPrivate)
+                                    .aeroRefractIf(16.dp),
+                            )
+                        }
                     }
                 }
             }
@@ -1149,6 +1167,7 @@ private fun TabCard(
     onCloseDragAbandon: () -> Unit,
 ) {
     val density = LocalDensity.current
+    val ninety8 = LocalNinety8.current
     var offsetY by remember(tab.id) { mutableFloatStateOf(0f) }
     var cardCoords by remember(tab.id) { mutableStateOf<LayoutCoordinates?>(null) }
     var expanding by remember(tab.id) { mutableStateOf(false) }
@@ -1460,12 +1479,10 @@ private fun TabCard(
                 .alpha(if (hideThumbnail) 0f else 1f)
                 .shadow(if (com.yuku.browser.ui.theme.LocalAero.current) 8.dp else 0.dp, specialCorner(16.dp), clip = false)
                 .clip(specialCorner(16.dp))
-                .grainedBackground(if (tab.isPrivate) Color(0xFF121212) else PageBg)
-                // Under 98 a card is a WINDOW and the switcher is the
-                // desktop it is open on (see `BrowserPalette.emptyBg`), so
-                // it takes a window's raised edge. Drawn over the preview
-                // rather than under it: the frame belongs to the window, not
-                // to the page inside it.
+                // The 98 frame owns the outside of the card; the page is
+                // inset below so it never paints underneath those bands.
+                .background(if (ninety8) MaterialTheme.colorScheme.surface else Color.Transparent)
+                // Keep the page beneath the full two-band period bevel.
                 .bevel98If()
                 // Under Aero a card is a pane of glass with the page laid
                 // under it, standing on the sky (see `AeroSkyLight`) — so it
@@ -1497,21 +1514,29 @@ private fun TabCard(
             val full = tab.thumbnailFull?.takeIf {
                 (com.yuku.browser.ui.theme.LocalAero.current || com.yuku.browser.ui.theme.LocalFrosted.current) && !it.isRecycled
             }
-            (full ?: tab.thumbnail)?.let { bitmap ->
-                // The page box alone: the status bar strip grows in only as
-                // the card zooms to full screen (see shrinkGeometry).
-                PagePreviewImage(
-                    bitmap = bitmap,
-                    centred = full != null,
-                    // A private tab's card shows that there IS a page, and
-                    // nothing about what it is.
-                    // The enclosing glass samples this preview once, after
-                    // privacy treatment, alongside the card's other content.
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .privatePreview(tab.isPrivate)
-                        .aeroRefractIf(16.dp),
-                )
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(if (hideThumbnail) 0f else 1f)
+                    .previewInset98If(ninety8)
+                    .grainedBackground(if (tab.isPrivate) Color(0xFF121212) else PageBg),
+            ) {
+                (full ?: tab.thumbnail)?.let { bitmap ->
+                    // The page box alone: the status bar strip grows in only as
+                    // the card zooms to full screen (see shrinkGeometry).
+                    PagePreviewImage(
+                        bitmap = bitmap,
+                        centred = full != null,
+                        // A private tab's card shows that there IS a page, and
+                        // nothing about what it is.
+                        // The enclosing glass samples this preview once, after
+                        // privacy treatment, alongside the card's other content.
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .privatePreview(tab.isPrivate)
+                            .aeroRefractIf(16.dp),
+                    )
+                }
             }
         }
     }
@@ -1621,4 +1646,17 @@ private fun CloseAllSlot(
  */
 internal object SwitcherShrink {
     var amount: () -> Float = { 1f }
+}
+
+/** Clips paint to the 98 frame's inside without changing thumbnail layout. */
+private fun Modifier.previewInset98If(enabled: Boolean): Modifier {
+    if (!enabled) return this
+    return drawWithContent {
+        val inset = (BEVEL_BAND * 2).toPx()
+            .coerceAtMost(size.width / 2f)
+            .coerceAtMost(size.height / 2f)
+        clipRect(inset, inset, size.width - inset, size.height - inset) {
+            this@drawWithContent.drawContent()
+        }
+    }
 }

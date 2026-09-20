@@ -147,6 +147,7 @@ private fun TextSizeRow(scale: Int, onSetStep: (Int) -> Unit) {
             },
             valueRange = 0f..READER_TEXT_STEPS.lastIndex.toFloat(),
             steps = READER_TEXT_STEPS.size - 2,
+            colors = frostedSliderColors(),
             modifier = Modifier
                 .weight(1f)
                 .padding(horizontal = 16.dp),

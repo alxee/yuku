@@ -67,7 +67,15 @@ object ExternalLinks {
     ): Route {
         val scheme = Uri.parse(url).scheme?.lowercase() ?: return Route.Browser
 
-        if (scheme == "intent") return routeIntentUri(context, url, openLinksInApps)
+        // Leaving the browser for another app takes a link the USER followed,
+        // in the page itself — the same rule as the https path below. Without
+        // it any script or ad iframe could throw the Play Store or a dialer
+        // up over the page on its own.
+        val userInitiated = hasGesture && isMainFrame
+
+        if (scheme == "intent") {
+            return routeIntentUri(context, url, openLinksInApps && userInitiated, isMainFrame)
+        }
 
         if (scheme !in WEB_INTERNAL) {
             // An app scheme. Nothing here can render it either way, so the
@@ -77,8 +85,10 @@ object ExternalLinks {
             // to answer, loading it would replace the page the user is
             // reading with WebView's own "webpage not available", which says
             // less than staying put.
-            if (openLinksInApps || scheme in ALWAYS_EXTERNAL) {
-                launch(context, Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            if (userInitiated && (openLinksInApps || scheme in ALWAYS_EXTERNAL)) {
+                // BROWSABLE: only activities that agreed to be opened from
+                // the web, as for intent:// and https.
+                launch(context, Intent(Intent.ACTION_VIEW, Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE))
             }
             return Route.Consumed
         }
@@ -98,7 +108,7 @@ object ExternalLinks {
      * fallback is honoured in BOTH directions: it is what the setting turned
      * off means, as well as what a missing app means.
      */
-    private fun routeIntentUri(context: Context, url: String, openLinksInApps: Boolean): Route {
+    private fun routeIntentUri(context: Context, url: String, openLinksInApps: Boolean, isMainFrame: Boolean): Route {
         val intent = runCatching { Intent.parseUri(url, Intent.URI_INTENT_SCHEME) }.getOrNull()
             ?: return Route.Consumed
         val fallback = intent.getStringExtra("browser_fallback_url")
@@ -115,6 +125,8 @@ object ExternalLinks {
             intent.flags = 0
             if (launch(context, intent)) return Route.Consumed
         }
+        // A fallback loaded from a subframe would navigate the whole tab.
+        if (!isMainFrame) return Route.Consumed
         return fallback?.let(Route::LoadInstead) ?: Route.Consumed
     }
 

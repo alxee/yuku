@@ -142,6 +142,13 @@ private const val PAGE_DARK_PAINT_MS = 120L
 private const val COVER_PAINT_MAX_MS = 1_000L
 
 /**
+ * A restored WebView normally resumes its document on its own. If the
+ * renderer was reclaimed while the task was away, `restoreState()` can still
+ * return history while no document ever finishes rendering.
+ */
+private const val RESTORE_FALLBACK_MS = 2_500L
+
+/**
  * The beat a page cover waits past the end of the load before lifting.
  *
  * A page that has just finished loading very often lays itself out once more
@@ -604,6 +611,9 @@ class BrowserViewModel @JvmOverloads constructor(
      */
     private val pendingRestores = HashMap<Long, Bundle>()
 
+    /** One bounded recovery job for each WebView rebuilt from parked state. */
+    private val restoreFallbacks = HashMap<Long, Pair<WebView, Job>>()
+
     /**
      * Whether [restorePageStates] has finished putting the saved session's
      * parked states into [pendingRestores]. Until it has, a miss in that map
@@ -856,6 +866,9 @@ class BrowserViewModel @JvmOverloads constructor(
     /** Experimental glass edges on the page (`ui/PageLens.kt`). */
     private val _pageLens = MutableStateFlow(false)
     val pageLens = _pageLens.asStateFlow()
+
+    private val _statusBarBlur = MutableStateFlow(true)
+    val statusBarBlur = _statusBarBlur.asStateFlow()
 
     /** Frosted-glass sheets under the Default and Nothing looks. */
     private val _translucentSheets = MutableStateFlow(false)
@@ -1222,6 +1235,10 @@ class BrowserViewModel @JvmOverloads constructor(
         // together, and a video call is one decision, not two.
         val permissions: List<SitePermission>,
         val private: Boolean,
+        // Part of the same request, already allowed by a standing answer:
+        // granted whatever the card is answered. The request's BLOCKED half
+        // is in neither list — the card must not be able to overturn it.
+        val preAllowed: List<SitePermission> = emptyList(),
     )
 
     private val _permissionAsk = MutableStateFlow<PermissionAsk?>(null)
@@ -1366,18 +1383,14 @@ class BrowserViewModel @JvmOverloads constructor(
      *
      * A WebView built from scratch has no rendered page to show: it is
      * created, told to load, and paints white until the network and the
-     * renderer are done — seconds of blank where a page used to be. That is
-     * the "stutter" of relaunching, and it is not only relaunching: any tab
-     * whose view was evicted ([trimViews]) or parked since the last launch
-     * gets a view built the moment it is asked for, which is the moment the
-     * user is opening it. The UI holds that tab's saved thumbnail over the
-     * live view for exactly as long as this names it, so a tab arrives
-     * looking like the card it grew out of instead of flashing white first.
+     * renderer are done. The UI holds its saved thumbnail over that fresh
+     * load. A successful saved-state restore skips this cover: its cached
+     * document can already be interactive while resources finish loading.
      *
      * A SET rather than one id because more than one tab can be waiting: the
      * one being opened, and any the host builds behind it. Each is cleared on
      * its own when its load FINISHES and the frame that finished it is up
-     * (see [liftCoverWhenPainted]), by a main-frame failure (there is a real
+     * (see [settleRestoredPage]), by a main-frame failure (there is a real
      * error state to show instead), or by the UI's own timeout — a cover that
      * outlives its page is a frozen app.
      *
@@ -1925,11 +1938,6 @@ class BrowserViewModel @JvmOverloads constructor(
         // none — the page would be restored twice. It's one small file, and
         // the JSON blob above was read the same way for the same reason.
         _currentTabId.value.let { id -> pageStateStore.read(id)?.let { pendingRestores[id] = it } }
-        // Something to cover the blank first seconds with, but only where
-        // there is actually a page coming back to cover.
-        if (saved.tabs.any { it.id == _currentTabId.value }) {
-            _coveredTabIds.value = setOf(_currentTabId.value)
-        }
         return listOf(restoreThumbnails(ids), restoreFavicons(), restorePageStates(ids))
     }
 
@@ -1984,6 +1992,7 @@ class BrowserViewModel @JvmOverloads constructor(
         _pullToRefreshEnabled.value = pullToRefreshEnabled
         _linkPreviewEnabled.value = linkPreviewEnabled
         _pageLens.value = pageLens
+        _statusBarBlur.value = statusBarBlur
         _translucentSheets.value = translucentSheets
         _translucency.value = translucency
         _newTabPlacement.value = newTabPlacement
@@ -2134,6 +2143,7 @@ class BrowserViewModel @JvmOverloads constructor(
                     pullToRefreshEnabled = _pullToRefreshEnabled.value,
                     linkPreviewEnabled = _linkPreviewEnabled.value,
                     pageLens = _pageLens.value,
+                    statusBarBlur = _statusBarBlur.value,
                     translucentSheets = _translucentSheets.value,
                     translucency = _translucency.value,
                     newTabPlacement = _newTabPlacement.value,
@@ -2531,16 +2541,52 @@ class BrowserViewModel @JvmOverloads constructor(
      * That is exactly the tab a double-tap flip goes back to.
      */
     fun webViewFor(tab: Tab): WebView {
-        // Built HERE and nowhere else is what earns the cover: this is the
-        // host asking for a tab it is about to show, so a view that has to be
-        // built is a page the user is opening into and that has not been
-        // fetched yet. The page-dark rebuild goes through [create] directly
-        // for the opposite reason — see rebuildForPageDark, which crossfades
-        // two live renderings precisely so no still image is ever shown.
-        val web = views.remove(tab.id) ?: create(tab).also { coverUntilPainted(tab) }
+        // Only a fresh load needs a preview cover. A restored document can
+        // already be interactive before onPageFinished; covering it until
+        // then hides scrolling behind a stale picture on relaunch.
+        val existing = views.remove(tab.id)
+        var restored = false
+        val web = existing ?: create(tab, recoveryFallback = true, onRestored = { restored = true })
         views[tab.id] = web
+        if (existing == null && !restored) {
+            coverUntilPainted(tab)
+        }
         trimViews()
         return web
+    }
+
+    /**
+     * `restoreState` returning history is not proof that Chromium revived the
+     * document. A renderer killed while the task was backgrounded can leave a
+     * valid list attached to a white surface and never call `onPageFinished`.
+     * Retry the tab's URL before the saved preview is allowed to uncover it.
+     */
+    private fun armRestoreFallback(id: Long, web: WebView, url: String) {
+        restoreFallbacks.remove(id)?.second?.cancel()
+        val job = viewModelScope.launch {
+            delay(RESTORE_FALLBACK_MS)
+            if (views[id] !== web || restoreFallbacks[id]?.first !== web) return@launch
+            restoreFallbacks.remove(id)
+            // This snapshot did not yield a document. Do not retry it on every
+            // later cold start; the fresh page will be saved on the next stop.
+            forgetPageStates(listOf(id))
+            pendingScroll.remove(id)
+            // This feeds the existing toolbar loading line while the recovery
+            // navigation is in flight, including after the preview's cap.
+            update(id) {
+                it.copy(loading = true, progress = 0, loadFailed = false, loadError = null)
+            }
+            web.loadUrl(url)
+        }
+        restoreFallbacks[id] = web to job
+    }
+
+    /** The restored document completed or failed, so no recovery reload is due. */
+    private fun disarmRestoreFallback(id: Long, web: WebView) {
+        restoreFallbacks[id]?.takeIf { it.first === web }?.let {
+            restoreFallbacks.remove(id)
+            it.second.cancel()
+        }
     }
 
     /**
@@ -2556,7 +2602,15 @@ class BrowserViewModel @JvmOverloads constructor(
             CookieManager.getInstance()
         }
 
-    private fun create(tab: Tab, load: Boolean = true): WebView {
+    private fun create(
+        tab: Tab,
+        load: Boolean = true,
+        // `rebuildForPageDark` already keeps the outgoing live page over its
+        // replacement. The watchdog belongs to user-visible recovery only:
+        // cold starts, renderer death, and an evicted tab reopening.
+        recoveryFallback: Boolean = false,
+        onRestored: () -> Unit = {},
+    ): WebView {
         // Seeded before anything can be fetched. `onPageStarted` keeps it in
         // step from here on, but a view built for a tab that is about to
         // restore its history would otherwise answer its first subresources
@@ -2614,7 +2668,7 @@ class BrowserViewModel @JvmOverloads constructor(
         applyCosmetic(web, cookieBannersFor(tab.id))
         // Reports the page's own bottom bar, if it has one, so the toolbar
         // hiding doesn't drop it under the system navigation bar.
-        PageBottomBar.attach(web, { pageChromeInsetPx }, { pageBarFillPx }) { height ->
+        PageBottomBar.attach(web, { pageChromeInsetPx }, { pageBarFillPx }, { pageEndPadPx }) { height ->
             setPageBottomBar(tab.id, height)
         }
         // The same at the other edge: the overlay's header, and in the
@@ -2624,6 +2678,7 @@ class BrowserViewModel @JvmOverloads constructor(
             web, { pageTopContentPx }, { pageTopBarPx }, { pageTopFillPx },
             stripPx = { pageTopStripPx },
             stripFadePx = { pageTopStripFadePx },
+            stripBlur = { _statusBarBlur.value },
             onStrip = { report -> setStatusStrip(tab.id, report) },
         )
         // Starts pulling the article out of every page from its first
@@ -2841,6 +2896,12 @@ class BrowserViewModel @JvmOverloads constructor(
             }
 
             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                // A restore that reached a real main-frame navigation is alive.
+                // Its network load may legitimately take longer than the
+                // restore watchdog; replacing it with loadUrl at that point
+                // cancels the request already in flight and can surface that
+                // cancellation as a connection reset on cold start.
+                disarmRestoreFallback(id, view)
                 // Before anything else on this page: what a document is
                 // filtered, zoomed and darkened by is a property of the site
                 // it belongs to, and the subresources it is about to ask for
@@ -2915,7 +2976,16 @@ class BrowserViewModel @JvmOverloads constructor(
                 armNavHold(id, view)
             }
 
+            override fun onPageCommitVisible(view: WebView, url: String) {
+                // Some restored documents commit without a matching
+                // onPageStarted callback. A committed document is equally
+                // conclusive evidence that the saved state revived. Keep an
+                // existing cover until finish, but never reload underneath it.
+                disarmRestoreFallback(id, view)
+            }
+
             override fun onPageFinished(view: WebView, url: String) {
+                disarmRestoreFallback(id, view)
                 _blockedOnPage.value = adBlocker.pageCount()
                 // The title is taken here as well as at onReceivedTitle,
                 // which is the one thing a background load DOES have to
@@ -2961,6 +3031,7 @@ class BrowserViewModel @JvmOverloads constructor(
                 error: WebResourceError,
             ) {
                 if (request.isForMainFrame && !isSpeculative(request)) {
+                    disarmRestoreFallback(id, view)
                     // Which failure this was is the whole of what the error
                     // screen has to say — a name that doesn't resolve and a
                     // refused connection are different problems with
@@ -3400,6 +3471,17 @@ class BrowserViewModel @JvmOverloads constructor(
         // load of whatever page it happened to be on.
         val parked = pendingRestores.remove(tab.id) ?: parkedFromDisk(tab.id)
         if (parked != null) {
+            if (recoveryFallback) {
+                // A restore is still work from the user's point of view. In
+                // particular, if its preview was not persisted, do not leave
+                // a white view with no indication that Chromium is reviving
+                // (or about to retry) the page. Arm this before restoreState:
+                // implementations are allowed to complete it synchronously.
+                update(tab.id) {
+                    it.copy(loading = true, progress = 0, loadFailed = false, loadError = null)
+                }
+                armRestoreFallback(tab.id, web, tab.url)
+            }
             val restored = web.restoreState(parked)
             // A parked state older than the tab it belongs to would quietly
             // put a different page on screen than the title, URL bar and
@@ -3408,8 +3490,10 @@ class BrowserViewModel @JvmOverloads constructor(
             if (restored != null && restored.currentItem?.url == tab.url) {
                 val y = parked.getInt(PARKED_SCROLL_Y, 0)
                 if (y > 0) pendingScroll[tab.id] = y
+                onRestored()
                 return web
             }
+            if (recoveryFallback) disarmRestoreFallback(tab.id, web)
         }
         // A plain load starts at the top and is honest about it: there is no
         // history behind this page any more, so there is no "where it was".
@@ -3948,6 +4032,10 @@ class BrowserViewModel @JvmOverloads constructor(
     }
 
     private fun destroy(web: WebView) {
+        restoreFallbacks.entries
+            .filter { it.value.first === web }
+            .map { it.key }
+            .forEach { id -> restoreFallbacks.remove(id)?.second?.cancel() }
         navSnapshots.values.removeAll { it.view === web }
         pendingHolds.values.removeAll { it.web === web }
         activeHolds.filterValues { it.web === web }.forEach { (id, hold) -> removeHold(id, hold) }
@@ -4277,7 +4365,18 @@ class BrowserViewModel @JvmOverloads constructor(
             // for it to start before waiting for it to finish — otherwise
             // "not loading" matches immediately, on the blank frame.
             withTimeoutOrNull(PAGE_DARK_START_TIMEOUT_MS) { _tabs.first(::loading) }
-            withTimeoutOrNull(PAGE_DARK_LOAD_TIMEOUT_MS) { _tabs.first { !loading(it) } }
+            val finished = withTimeoutOrNull(PAGE_DARK_LOAD_TIMEOUT_MS) {
+                _tabs.first { !loading(it) }
+                true
+            } ?: false
+            // A timer is not evidence that a replacement exists on screen.
+            // If Chromium failed to revive it, retain the old, known-good
+            // page instead of fading into the WebView's white surface.
+            val painted = finished && awaitPagePainted(currentId, COVER_PAINT_MAX_MS)
+            if (!painted || views[currentId] !== fresh) {
+                abandonPageDarkReplacement(currentId, old, fresh)
+                return@launch
+            }
             delay(PAGE_DARK_PAINT_MS)
             old.animate()
                 .alpha(0f)
@@ -4290,6 +4389,21 @@ class BrowserViewModel @JvmOverloads constructor(
                 .withEndAction { finishPageDarkFade() }
                 .start()
         }
+    }
+
+    /**
+     * A page-dark replacement never became drawable. Put the still-live page
+     * back in charge and discard only the failed replacement; this keeps a
+     * theme change from becoming a blank-screen failure.
+     */
+    private fun abandonPageDarkReplacement(id: Long, old: WebView, fresh: WebView) {
+        if (views[id] === fresh) views[id] = old
+        old.alpha = 1f
+        old.setOnTouchListener(null)
+        fadingOut = null
+        pageDarkTransitioning = false
+        pageDarkJob = null
+        destroy(fresh)
     }
 
     /**
@@ -4896,6 +5010,14 @@ class BrowserViewModel @JvmOverloads constructor(
         markDirty()
     }
 
+    fun toggleStatusBarBlur() {
+        _statusBarBlur.update { !it }
+        views.values.forEach {
+            PageTopInset.setStrip(it, pageTopStripPx, pageTopStripFadePx, _statusBarBlur.value)
+        }
+        markDirty()
+    }
+
     fun toggleTranslucentSheets() {
         _translucentSheets.update { !it }
         markDirty()
@@ -4939,6 +5061,8 @@ class BrowserViewModel @JvmOverloads constructor(
     }
 
     fun toggleBookmark(tab: Tab) {
+        val adding = _bookmarks.value.none { it.url == tab.url }
+        val entry = BookmarkEntry(url = tab.url, title = tab.label, host = tab.host)
         _bookmarks.update { list ->
             if (list.any { it.url == tab.url }) {
                 list.filterNot { it.url == tab.url }
@@ -4951,10 +5075,17 @@ class BrowserViewModel @JvmOverloads constructor(
         // keep — the user asked for it to outlast the page they are on, which
         // is the whole meaning of the word. It cannot go through
         // [persistNow], which would write this session's empty tab list over
-        // the real one, so it is a read-modify-write of that one list.
+        // the real one, so it is a read-modify-write of that one list — and
+        // only THIS toggle is applied to what is on disk. Writing this
+        // session's whole list would erase every bookmark the browser proper
+        // saved since the overlay opened.
         if (ephemeral) {
-            val bookmarks = _bookmarks.value
-            viewModelScope.launch(Dispatchers.IO) { store.updateBookmarks { bookmarks } }
+            viewModelScope.launch(Dispatchers.IO) {
+                store.updateBookmarks { saved ->
+                    val rest = saved.filterNot { it.url == entry.url }
+                    if (adding) rest + entry else rest
+                }
+            }
         }
     }
 
@@ -5438,9 +5569,9 @@ class BrowserViewModel @JvmOverloads constructor(
      * view, and if the swap is interrupted (the tab closed, the view evicted)
      * nothing would ever call it back and the cover would freeze the app.
      */
-    suspend fun awaitPagePainted(id: Long, timeoutMs: Long) {
-        val web = views[id] ?: return
-        withTimeoutOrNull(timeoutMs) {
+    suspend fun awaitPagePainted(id: Long, timeoutMs: Long): Boolean {
+        val web = views[id] ?: return false
+        return withTimeoutOrNull(timeoutMs) {
             suspendCancellableCoroutine { continuation ->
                 web.postVisualStateCallback(
                     id,
@@ -5453,7 +5584,8 @@ class BrowserViewModel @JvmOverloads constructor(
                     },
                 )
             }
-        }
+            true
+        } ?: false
     }
 
     fun setPageExposed(exposed: Boolean) {
@@ -5519,16 +5651,24 @@ class BrowserViewModel @JvmOverloads constructor(
      * the bridge by each new document, so a navigation doesn't land a page
      * under the toolbar until the next change.
      */
-    fun setPageChromeInset(px: Int) {
-        if (pageChromeInsetPx == px) return
+    fun setPageChromeInset(px: Int, endPx: Int = 0) {
+        if (pageChromeInsetPx == px && pageEndPadPx == endPx) return
+        val insetChanged = pageChromeInsetPx != px
         pageChromeInsetPx = px
+        pageEndPadPx = endPx
         views.values.forEach {
-            PageBottomBar.setInset(it, px)
-            ReaderMode.setInsets(it, pageTopContentPx, px)
+            PageBottomBar.setInset(it, px, endPx)
+            if (insetChanged) ReaderMode.setInsets(it, pageTopContentPx, px)
         }
     }
 
     private var pageChromeInsetPx = 0
+
+    /**
+     * Room the document's end is given while [pageChromeInsetPx] is 0 but the
+     * page still runs under the navigation bar (no floor) — see PageBottomBar.
+     */
+    private var pageEndPadPx = 0
 
     /**
      * How much of the page's TOP edge the browser is covering — the overlay's
@@ -5602,7 +5742,7 @@ class BrowserViewModel @JvmOverloads constructor(
         if (pageTopStripPx == px && pageTopStripFadePx == fadePx) return
         pageTopStripPx = px
         pageTopStripFadePx = fadePx
-        views.values.forEach { PageTopInset.setStrip(it, px, fadePx) }
+        views.values.forEach { PageTopInset.setStrip(it, px, fadePx, _statusBarBlur.value) }
     }
 
     private var pageTopStripPx = 0
@@ -6468,6 +6608,7 @@ class BrowserViewModel @JvmOverloads constructor(
         val current = id == _currentTabId.value
         if (current) finishPageDarkFade()
         if (views[id] === web) views.remove(id)
+        disarmRestoreFallback(id, web)
         endFindFor(id)
         cancelJsDialogFor(id)
         cancelHttpAuthFor(id)
@@ -6532,8 +6673,10 @@ class BrowserViewModel @JvmOverloads constructor(
             return
         }
         val answers = wanted.associateWith { standingAnswer(origin, it) }
-        if (answers.values.none { it == PermissionRule.Ask }) {
-            grantWithSystem(wanted.filter { answers[it] == PermissionRule.Allow }, reply)
+        val allowed = wanted.filter { answers[it] == PermissionRule.Allow }
+        val toAsk = wanted.filter { answers[it] == PermissionRule.Ask }
+        if (toAsk.isEmpty()) {
+            grantWithSystem(allowed, reply)
             return
         }
         // One question at a time, the same rule the js dialogs follow: a page
@@ -6548,8 +6691,9 @@ class BrowserViewModel @JvmOverloads constructor(
         _permissionAsk.value = PermissionAsk(
             tabId = tabId,
             origin = origin,
-            permissions = wanted,
+            permissions = toAsk,
             private = _tabs.value.firstOrNull { it.id == tabId }?.isPrivate == true,
+            preAllowed = allowed,
         )
     }
 
@@ -6562,15 +6706,15 @@ class BrowserViewModel @JvmOverloads constructor(
         when (answer) {
             PermissionAnswer.Block -> {
                 rememberAnswer(ask, allowed = false, persist = true)
-                reply(emptyList())
+                grantWithSystem(ask.preAllowed, reply)
             }
             PermissionAnswer.AllowOnce -> {
                 rememberAnswer(ask, allowed = true, persist = false)
-                grantWithSystem(ask.permissions, reply)
+                grantWithSystem(ask.preAllowed + ask.permissions, reply)
             }
             PermissionAnswer.Allow -> {
                 rememberAnswer(ask, allowed = true, persist = true)
-                grantWithSystem(ask.permissions, reply)
+                grantWithSystem(ask.preAllowed + ask.permissions, reply)
             }
         }
     }

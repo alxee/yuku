@@ -206,7 +206,9 @@ internal fun Modifier.frostedSheetGlass(
     val effect = remember { PageGlassEffect() }
     val ground = BarBg
     val dark = LocalChromeDarkness.current >= 0.5f
-    val material = remember(ground, dark) { FrostMaterial.over(ground, dark) }
+    val setting = LocalFrostOpacity.current
+    val material = remember(ground, dark, setting) { FrostMaterial.over(ground, dark, setting) }
+    val blurDp = frostBlurDp(setting)
     var origin by remember { mutableStateOf(Offset.Zero) }
     return this.onGloballyPositioned { origin = it.positionInRoot() }.graphicsLayer {
         val pane = paneInRoot()
@@ -218,7 +220,7 @@ internal fun Modifier.frostedSheetGlass(
             if (bar.isEmpty) Rect.Zero else bar.translate(-origin),
             if (find.isEmpty) Rect.Zero else find.translate(-origin),
             Rect.Zero, Offset.Zero, 1f, density,
-            blurDp = FROST_BLUR_DP, bendDp = 0f, paneCornerDp = corner.value,
+            blurDp = blurDp, bendDp = 0f, paneCornerDp = corner.value,
             barCornerDp = 0f, findCornerDp = findCorner.value,
             material = material,
         )
@@ -256,49 +258,45 @@ internal class FrostMaterial(
         val Clear = FrostMaterial(saturation = 1f, luminosity = 0f, targetLuma = 0f, rim = 0f)
 
         /**
-         * The page is pulled to the lightness of the SOLID sheet's own ground,
-         * so the glass composites to the value the opaque sheet has and every
-         * element on it keeps the contrast it has there. Saturation is lifted
-         * only gently: the page shows as colour, not as competing detail.
+         * The page is pulled toward the lightness of the SOLID sheet's own
+         * ground, so the glass composites near the value the opaque sheet has
+         * and every element on it keeps its contrast. How hard it is pulled
+         * follows the slider ([setting], 0 clear .. 1 solid): at the clear end
+         * the page keeps most of its own light and colour (and the rim does
+         * more of the work of saying there is glass at all); at the solid end
+         * it is flattened almost to the ground and only tints it.
          */
-        fun over(ground: Color, dark: Boolean) = FrostMaterial(
-            saturation = 1.25f,
-            luminosity = 0.9f,
-            targetLuma = 0.2126f * ground.red + 0.7152f * ground.green + 0.0722f * ground.blue,
-            rim = if (dark) 0.12f else 0.35f,
-        )
+        fun over(ground: Color, dark: Boolean, setting: Float): FrostMaterial {
+            val s = setting.coerceIn(0f, 1f)
+            return FrostMaterial(
+                saturation = lerpF(1.55f, 1.15f, s),
+                luminosity = lerpF(0.35f, 0.95f, s),
+                targetLuma = 0.2126f * ground.red + 0.7152f * ground.green + 0.0722f * ground.blue,
+                rim = (if (dark) 0.12f else 0.35f) * lerpF(1.5f, 0.7f, s),
+            )
+        }
     }
 }
 
 private const val RIM_WIDTH_DP = 1.25f
 
 /**
- * Deliberately far heavier than Aero's 7dp: Aero is clear glass you look
- * THROUGH (shapes survive, the rim bends them); this is frosted glass the page
- * only COLOURS — no shape under it survives, as in the system shade.
+ * The frost's blur for the slider. Always far heavier than Aero's 7dp at the
+ * solid end — frosted glass the page only COLOURS, as in the system shade —
+ * but at the clear end light enough that the page's shapes still read
+ * through it: a nearly clear pane with a 40dp blur is a smear, not glass.
  */
-private const val FROST_BLUR_DP = 40f
+internal fun frostBlurDp(setting: Float): Float = lerpF(10f, 56f, setting.coerceIn(0f, 1f))
 
 /**
  * How much of a field's / tile's / row's own fill survives on frosted glass.
- * Follows the canvas (see [LocalFrostOpacity]) but always stays MORE solid
- * than it — `canvas^0.4` — so elements read as controls standing on the glass
- * at every point of the slider, and still reach nearly clear at its far end.
+ * Follows the slider with the canvas but always stays MORE solid than it, so
+ * elements read as controls standing on the glass at every point, and reach
+ * nearly clear at the transparent end and fully solid at the other.
  */
 internal val FROSTED_ELEMENT_ALPHA: Float
-    @Composable get() = frostElementAlpha(frostCanvasAlpha(LocalFrostOpacity.current))
+    @Composable get() = frostElementAlpha(LocalFrostOpacity.current)
 
-/**
- * How much of a SOLID accent fill survives on frosted glass (a switch track,
- * Nothing's new-tab oval). Higher than [FROSTED_ELEMENT_ALPHA]: the accent is
- * a mark, and a mark thinned as far as a ground stops reading as one.
- */
-internal val FROSTED_ACCENT_ALPHA: Float
-    @Composable get() = FROSTED_ELEMENT_ALPHA
-
-/** A solid accent fill, let through a little under translucent sheets. */
-@Composable
-internal fun Color.frostedAccentIf(): Color = frostedIf(FROSTED_ACCENT_ALPHA)
 
 /**
  * The frosted sheet's fill: the SOLID sheet's own ground, unmixed, at
@@ -312,10 +310,19 @@ internal fun Color.frostedAccentIf(): Color = frostedIf(FROSTED_ACCENT_ALPHA)
 internal fun frostedSheetFill(ground: Color, accent: Color, nothing: Boolean): Color =
     ground.copy(alpha = frostCanvasAlpha(LocalFrostOpacity.current))
 
-/** The canvas's alpha for the user's setting: nearly clear to nearly solid. */
-internal fun frostCanvasAlpha(setting: Float): Float = 0.08f + (0.96f - 0.08f) * setting.coerceIn(0f, 1f)
+/**
+ * The canvas's alpha for the user's setting: all but clear (2%) to all but
+ * solid (98.5%). Eased so the middle of the slider stays in the band where
+ * the frost reads as a material; the extremes are where the range widened.
+ */
+internal fun frostCanvasAlpha(setting: Float): Float =
+    lerpF(0.02f, 0.985f, Math.pow(setting.coerceIn(0f, 1f).toDouble(), 1.3).toFloat())
 
-internal fun frostElementAlpha(canvas: Float): Float = Math.pow(canvas.toDouble(), 0.4).toFloat()
+internal fun frostElementAlpha(setting: Float): Float =
+    lerpF(0.10f, 1f, Math.pow(setting.coerceIn(0f, 1f).toDouble(), 0.7).toFloat())
+
+
+private fun lerpF(a: Float, b: Float, t: Float): Float = a + (b - a) * t
 
 /** Filters the shared page/switcher layer below chrome; labels stay sharp. */
 @Composable

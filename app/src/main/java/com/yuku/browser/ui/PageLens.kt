@@ -39,10 +39,10 @@ internal const val PAGE_LENS_SCALE = 1.5f
  * ever increases from 1 at the bend line, so the band shows MORE page than it
  * has room for — [PAGE_LENS_REACH] bend depths of it past the edge.
  */
-internal const val PAGE_LENS_SQUEEZE = 0.6f
+internal const val PAGE_LENS_SQUEEZE = 0.75f
 
 /** Red squeezes this much more than green, blue this much less. */
-internal const val PAGE_LENS_DISPERSION = 0.35f
+internal const val PAGE_LENS_DISPERSION = 0.45f
 
 /**
  * Keystone: bent content is drawn in toward the middle as it curves away,
@@ -50,18 +50,7 @@ internal const val PAGE_LENS_DISPERSION = 0.35f
  * past the screen's sides is nothing, drawn black, and at this size that only
  * ever falls inside the corners' own arcs.
  */
-internal const val PAGE_LENS_SKEW = 0.04f
-
-/**
- * How far up a page's own bottom bar sits under the lens, in bend depths,
- * while the toolbar is away — and how deep the bottom bend is beneath it then.
- * The bend is made exactly as deep as the gap, so the bar rests on the bend
- * line and is never bent however low it sits; all the bending happens in the
- * strip under it, which is painted in the bar's own colour. Lower than the
- * navigation-bar floor the bar gets without the lens: there is nothing at the
- * screen's edge for it to stay clear of, only bezel.
- */
-internal const val PAGE_LENS_BAR_CLEARANCE = 0.4f
+internal const val PAGE_LENS_SKEW = 0.06f
 
 /**
  * How far past each visible edge the curve reads page, in bend depths: the
@@ -94,7 +83,7 @@ internal const val LENS_CORNER_START = 0.85f
  * superellipse this much larger stands as far in at its diagonal as the
  * display's own circle does.
  */
-internal const val LENS_CORNER_EXTENT = 1.4f
+internal const val LENS_CORNER_EXTENT = 1.0f
 
 /**
  * The zoom's rounded crop at full screen, against the display's radius: a
@@ -107,6 +96,12 @@ internal const val LENS_CROP_CORNER = 0.8f
 internal fun lensCornerRamp(strength: Float): Float {
     val t = ((strength - LENS_CORNER_START) / (1f - LENS_CORNER_START)).coerceIn(0f, 1f)
     return t * t * (3f - 2f * t)
+}
+
+/** The shader's `softReach`: the curve's read eased into the last readable row. */
+internal fun lensReach(s: Float, a: Float): Float {
+    val x = s / a
+    return a * x / Math.cbrt((1f + x * x * x).toDouble()).toFloat()
 }
 
 /** AGSL is API 33; below it the switch is shown disabled and nothing is built. */
@@ -348,8 +343,16 @@ internal class PageLens private constructor(private val web: WebView) {
             val bandDepth = if (fromTop) depth else last[7]
             if (edgeDist < bandDepth) {
                 val v = 1f - edgeDist / bandDepth
+                // The same eased read the shader draws with (softReach).
+                val bendY = if (fromTop) top + bandDepth else bottom - bandDepth
+                val maxY = min(last[1], last[8]) - 1f
+                val reach = max((if (fromTop) bendY else maxY - bendY) / bandDepth, 0.001f)
+                fun m(x: Float) = lensReach(x + k * x * x * x, reach)
                 var u = v
-                repeat(6) { u -= (u + k * u * u * u - v) / (1f + 3f * k * u * u) }
+                repeat(8) {
+                    val d = (m(u + 1e-3f) - m(u - 1e-3f)) / 2e-3f
+                    if (d > 1e-4f) u = (u - (m(u) - v) / d).coerceIn(0f, 1f)
+                }
                 u = u.coerceIn(0f, 1f)
                 screenDist = bandDepth * (1f - u)
                 keystone = 1f + PAGE_LENS_SKEW * last[6] * u * u
@@ -410,7 +413,9 @@ internal class PageLens private constructor(private val web: WebView) {
         val dir = if (fromBottom) 1f else -1f
         val bendY = (if (fromBottom) bottom else top) - dir * band
         val k = PAGE_LENS_SQUEEZE * s
-        out[1] = (bendY + dir * (u + k * u * u * u) * band).coerceIn(0f, min(last[1], last[8]) - 1f)
+        val maxY = min(last[1], last[8]) - 1f
+        val reach = max((if (fromBottom) maxY - bendY else bendY) / band, 0.001f)
+        out[1] = (bendY + dir * lensReach(u + k * u * u * u, reach) * band).coerceIn(0f, maxY)
         val cx = w * 0.5f
         out[0] = (cx + (x - cx) * (1f + PAGE_LENS_SKEW * s * u * u)).coerceIn(0f, w - 1f)
         return true
@@ -525,9 +530,10 @@ private class PageLensBrush {
         if (strength <= 0f || width <= 0f || height <= 0f || depthPx <= 0f) return null
         val ramped = lensCornerRamp(strength.coerceIn(0f, 1f))
         if (ramped <= 0f) return null
-        // The bottom edge where the LIVE lens has it — the view's bottom,
-        // [belowPx] past this box (under the toolbar) — so the picture and the
-        // page bend in the same place and the handoff between them is still.
+        // The bottom edge where the LIVE lens has it with the toolbar up — on
+        // the toolbar's top, [belowPx] past this box's bottom (0 for the page
+        // box) — so the picture and the page bend in the same place and the
+        // handoff between them is still.
         val bottom = (height + belowPx).coerceAtLeast(1f)
         // Read no higher than a few px in: there is no page above a picture,
         // and its very first row is not a clean one (see the shader's readTop).
@@ -595,13 +601,19 @@ private const val CORNERS_AGSL = """
         if (!(outX && outY)) return half4(0.0);
         float len = length(off);
         if (len < 0.001) return half4(0.0);
-        // Superellipse distance (see LENS_CORNER_EXTENT).
-        float2 q = off / radius;
-        float d = pow(q.x * q.x * q.x + q.y * q.y * q.y, 1.0 / 3.0) * radius;
+        // A true circle, tangent to both edges. The joint stays invisible
+        // because the soft edge tapers to one pixel there and is centred on
+        // the arc (below), so the pixels along each edge come out clear.
+        float d = len;
         // sin(2θ): 0 where the curve meets a side or a bar, 1 at its middle.
         float taper = 2.0 * (off.x / len) * (off.y / len);
         float w = max(soft * taper, 1.0);
-        float a = smoothstep(radius - w, radius, d);
+        // CENTRED on the curve, not inside it: where the arc meets a side or
+        // a bar, the first pixel row/column in from that edge is half a pixel
+        // off it (d = radius - 0.5), and a ramp ending AT the radius gave
+        // those pixels half black — a 1px step sticking out along the edge
+        // exactly as long as the corner square.
+        float a = smoothstep(radius - w * 0.5, radius + w * 0.5, d);
         return half4(0.0, 0.0, 0.0, half(a));
     }
 """
@@ -651,6 +663,21 @@ private fun RuntimeShader.setLensUniforms(
 // device, not in the build.
 private const val LENS_AGSL = """
     uniform shader content;
+    // Spectral taps per pixel in the bands, and the sideways softening (px)
+    // at the very edge.
+    const int LENS_TAPS = 9;
+    const float LENS_SPREAD_X = 1.5;
+
+    // The curve's read s (band depths past the bend line), eased into the
+    // last readable row [a] instead of clamped at it. Clamped, the rows past
+    // the page's end repeated as one hard stretched strip; eased, the slope
+    // falls off smoothly, so the page stretches more the closer the edge.
+    // Nearly the identity where there is page to spare. Mirrored in Kotlin
+    // by lensReach().
+    float softReach(float s, float a) {
+        float x = s / a;
+        return a * x / pow(1.0 + x * x * x, 1.0 / 3.0);
+    }
     uniform float2 size;
     // The visible page, in layer px: below the status bar's strip and above
     // whatever the toolbar (or the screen's edge) hides.
@@ -710,7 +737,9 @@ private const val LENS_AGSL = """
         }
         // Full width along the edges, one pixel where an arc meets the side:
         // the fade never meets the screen's edge at an angle.
-        float soft = max(depth * halo * ny, 1.0);
+        // No fade at the TOP edge: the black there is the status bar's and
+        // stops at its edge, not a halo spilling onto the page below it.
+        float soft = distTop <= distBot ? 1.0 : max(depth * halo * ny, 1.0);
         float fade = 1.0 - strength * (1.0 - smoothstep(0.0, soft, inside));
         float edgeY = topEdge;
         // Direction from the bend line toward its edge.
@@ -732,15 +761,17 @@ private const val LENS_AGSL = """
         // The last stretch of the curve shows rows from well past the page's
         // edge squeezed into a few pixels, fringed — a thin strip of unrelated
         // content. Only that stretch fades out and closes its fringe.
-        float beyond = smoothstep(0.88, 1.0, u);
+        // Not at the top, where real page hangs past the edge (no strip of
+        // unrelated rows) and any darkening reads as the black growing below
+        // the status bar.
+        float beyond = dir < 0.0 ? 0.0 : smoothstep(0.88, 1.0, u);
         float disp = dispersion * (1.0 - beyond);
         fade *= 1.0 - strength * beyond;
         float bendY = edgeY - dir * band;
         float maxY = min(size.y, readBottom) - 1.0;
         float minY = min(readTop, maxY);
-        float sy = clamp(bendY + dir * (u + k * u3) * band, minY, maxY);
-        float syR = clamp(bendY + dir * (u + k * (1.0 + disp) * u3) * band, minY, maxY);
-        float syB = clamp(bendY + dir * (u + k * (1.0 - disp) * u3) * band, minY, maxY);
+        // How much page there is to read past the bend line, in band depths.
+        float reach = max((dir < 0.0 ? bendY - minY : maxY - bendY) / band, 0.001);
         // Keystone: the further round the bend, the more the row is drawn in
         // toward the middle (reading wider, displayed narrower). What it reads
         // from past the sides is nothing — black, with a pixel of edge — and
@@ -750,9 +781,34 @@ private const val LENS_AGSL = """
         float sx = cx + (p.x - cx) * (1.0 + skew * strength * u * u);
         float within = clamp(sx + 0.5, 0.0, 1.0) * clamp(maxX + 0.5 - sx, 0.0, 1.0);
         sx = clamp(sx, 0.0, maxX);
-        half gg = content.eval(float2(sx, sy)).g;
-        half rr = content.eval(float2(sx, syR)).r;
-        half bb = content.eval(float2(sx, syB)).b;
-        return half4(half3(rr, gg, bb) * half(fade * within), 1.0);
+        // A SPECTRUM rather than three channels: taps spread across the
+        // dispersion range, each row a wavelength with its own squeeze, and
+        // each tap's colour weighted by overlapping bell curves for red (most
+        // squeezed), green and blue — so the fringe is a continuous rainbow
+        // smear that blurs into itself, not three offset copies of the page.
+        // The spread grows with u, so the band's inner end stays sharp. A
+        // little spread across as well, since real glass softens both ways.
+        half3 acc = half3(0.0);
+        half3 wsum = half3(0.0);
+        float across = LENS_SPREAD_X * u * u;
+        for (int i = 0; i < LENS_TAPS; i++) {
+            // -1 (blue end) .. +1 (red end)
+            float f = float(i) / float(LENS_TAPS - 1) * 2.0 - 1.0;
+            float syi = clamp(bendY + dir * softReach(u + k * (1.0 + disp * f) * u3, reach) * band, minY, maxY);
+            // Alternate sides tap by tap, so the sideways spread is a blur
+            // rather than a slant.
+            float side = 1.0 - 2.0 * mod(float(i), 2.0);
+            float sxi = clamp(sx + across * f * side, 0.0, maxX);
+            half3 c = content.eval(float2(sxi, syi)).rgb;
+            half3 wt = half3(
+                exp(-((f - 0.75) * (f - 0.75)) / 0.32),
+                exp(-(f * f) / 0.32),
+                exp(-((f + 0.75) * (f + 0.75)) / 0.32)
+            );
+            acc += c * wt;
+            wsum += wt;
+        }
+        half3 rgb = acc / wsum;
+        return half4(rgb * half(fade * within), 1.0);
     }
 """

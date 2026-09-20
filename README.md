@@ -29,9 +29,9 @@ Change `applicationId` and `namespace` in `app/build.gradle.kts` from
 ## What works
 
 - One WebView per tab, held by the ViewModel so recomposition can't destroy it
-- Session restore: tabs come back as the page they were — navigation history and
-  scroll offset included — under a still image of that page, held until the live
-  one has painted, so a relaunch doesn't flash blank
+- Session restore: tabs recover their navigation history and scroll offset,
+  showing the cached page directly. A saved preview covers only fresh loads
+  when saved-state restoration is unavailable.
 - Bottom toolbar: tab count, new tab, menu chevron (rotates when the sheet opens)
 - New tab sheet: URL/search field, private-mode switch, recent history
 - Menu sheet: address bar (back / forward / registrable domain / copy / reload),

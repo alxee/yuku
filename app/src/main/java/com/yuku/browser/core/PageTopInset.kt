@@ -115,10 +115,11 @@ object PageTopInset {
         fillPx: () -> Int = { 0 },
         stripPx: () -> Int = { 0 },
         stripFadePx: () -> Int = { 0 },
+        stripBlur: () -> Boolean = { true },
         onStrip: (StatusStripReport?) -> Unit = {},
     ) {
         web.addJavascriptInterface(
-            Bridge(contentPx, barPx, fillPx, stripPx, stripFadePx, onStrip),
+            Bridge(contentPx, barPx, fillPx, stripPx, stripFadePx, stripBlur, onStrip),
             BRIDGE_NAME,
         )
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
@@ -171,8 +172,10 @@ object PageTopInset {
      * (a colour read in Kotlin would be the un-inverted one), every capture,
      * and the shrink into a card. 0 turns it off.
      */
-    fun setStrip(web: WebView, px: Int, fadePx: Int) {
-        web.evaluateJavascript("window.__topInsetStrip && window.__topInsetStrip($px, $fadePx)", null)
+    fun setStrip(web: WebView, px: Int, fadePx: Int, blur: Boolean = true) {
+        // Native strip rendering cannot be hidden by page stacking contexts.
+        val cssBlur = blur && android.os.Build.VERSION.SDK_INT < 31
+        web.evaluateJavascript("window.__topInsetStrip && window.__topInsetStrip($px, $fadePx, $cssBlur)", null)
     }
 
     class Bridge internal constructor(
@@ -181,6 +184,7 @@ object PageTopInset {
         private val fillPx: () -> Int,
         private val stripPx: () -> Int,
         private val stripFadePx: () -> Int,
+        private val stripBlur: () -> Boolean,
         private val onStrip: (StatusStripReport?) -> Unit,
     ) {
         private val main = android.os.Handler(android.os.Looper.getMainLooper())
@@ -192,6 +196,9 @@ object PageTopInset {
         /** Device pixels the strip fades out over, below the bar's edge. */
         @JavascriptInterface
         fun stripFade(): Int = stripFadePx()
+
+        @JavascriptInterface
+        fun stripBlur(): Boolean = stripBlur.invoke() && android.os.Build.VERSION.SDK_INT < 31
 
         /**
          * The strip's measurement (see [StatusStripReport]): colours as ARGB
@@ -264,6 +271,14 @@ object PageTopInset {
           // consent wall — from being shoved down the screen.
           var MIN_WIDTH_FRACTION = 0.6;
           var MAX_HEIGHT_FRACTION = 0.35;
+          // A panel that does not span the viewport is ordinarily a dialog or
+          // a floating card, whose vertical position belongs to the site. A
+          // side drawer is the exception: it is anchored to an edge and its
+          // whole top row is just as covered by the status bar as a header.
+          // It must take the same top inset and lose that room from its
+          // height, or its first menu items (and its close affordance) are
+          // unreachable behind the system bar.
+          var PANEL_WIDTH_FRACTION = 0.95;
           var MIN_HEIGHT_PX = 12;
           // A bar is recognised by RESTING on the top edge, and once it has
           // been moved it rests on the inset's line instead — so both lines
@@ -339,8 +354,8 @@ object PageTopInset {
             // with it; the new one is a different element, so the site's own
             // value is read again from it.
             if (b !== padEl){ padEl = b; pad = 0; }
-            var want = content > 0 ? content : 0;
-            applyScrollPad(want);
+            applyScrollPad(content > 0 ? content : 0);
+            var want = content > 0 ? content + (startHold ? startHold.height : 0) : 0;
             if (want === pad) return;
             if (!pad){
               padInline = b.style.getPropertyValue('padding-top');
@@ -362,6 +377,74 @@ object PageTopInset {
             } catch (e) {}
           }
 
+          // ---- a masthead that leaves the flow -------------------------
+          // keddr.com's mobile header is in flow at the document's start and
+          // turns `fixed` once the scroll passes its own height — with no
+          // placeholder, so its room collapses and everything under it jumps
+          // up by that height (and back down on the way up). Written for a
+          // header starting at 0, the switch lands while ours is still on
+          // screen under the padding, where the collapse is plainly seen and
+          // Chromium's scroll anchoring does not step in. So the room is HELD:
+          // the element's height goes into the padding for as long as it is
+          // out of the flow, in the same microtask as the site's class change,
+          // and the content never moves. Only for a room that actually
+          // collapsed (its parent shrank by it) — a site that leaves a
+          // placeholder of its own gets nothing added.
+          var startHold = null, startCands = [];
+          function updateStartHold(){
+            var b = document.body;
+            if (!b || !(content > 0)){ startHold = null; startCands = []; return; }
+            if (startHold){
+              var el = startHold.el, gone = !el.isConnected;
+              if (!gone){
+                try {
+                  var p = window.getComputedStyle(el).position;
+                  gone = p !== 'fixed' && p !== 'absolute';
+                } catch (e) { gone = true; }
+              }
+              if (gone) startHold = null;
+              return;
+            }
+            for (var i = 0; i < startCands.length; i++){
+              var c = startCands[i];
+              if (!c.el.isConnected || !c.el.parentElement) continue;
+              var pos;
+              try { pos = window.getComputedStyle(c.el).position; } catch (e) { continue; }
+              if (pos !== 'fixed' && pos !== 'absolute') continue;
+              var ph = c.el.parentElement.getBoundingClientRect().height;
+              if (Math.abs((c.parentH - ph) - c.height) <= 3){
+                startHold = { el: c.el, height: c.height };
+                startCands = [];
+                return;
+              }
+            }
+            // Who the document starts with now: the chain of short, full-width,
+            // in-flow boxes across its first line, outermost first.
+            var vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+            var y, cands = [];
+            try {
+              y = b.getBoundingClientRect().top + (parseFloat(window.getComputedStyle(b).paddingTop) || 0) + 1;
+            } catch (e) { return; }
+            var n = b, depth = 0;
+            while (n && depth < 12){
+              var next = null;
+              for (var k = 0; k < n.children.length; k++){
+                var ch = n.children[k], r, s;
+                try { r = ch.getBoundingClientRect(); s = window.getComputedStyle(ch); } catch (e) { continue; }
+                if (r.top > y || r.bottom < y || r.width < vw * FILL_WIDTH_FRACTION) continue;
+                if (s.position === 'fixed' || s.position === 'absolute' || s.display === 'none') continue;
+                if (r.height > 0 && r.height <= vh * MAX_HEIGHT_FRACTION && Math.abs(r.top - (y - 1)) <= 3){
+                  cands.push({ el: ch, height: r.height, parentH: n.getBoundingClientRect().height });
+                }
+                next = ch;
+                break;
+              }
+              n = next;
+              depth++;
+            }
+            startCands = cands;
+          }
+
           // A panel is SHORTENED, not shoved down the screen: its top comes
           // off the strip the browser covers and its own bottom stays where it
           // was, so what it holds against that bottom stays clear of the
@@ -372,24 +455,77 @@ object PageTopInset {
           function capPanel(rec){
             var el = rec.el, r;
             try { r = el.getBoundingClientRect(); } catch (e) { return; }
-            if (r.bottom - rec.bottom0 <= 1) return;
+            // A cap only ever SHORTENS, so one taken while there was less room
+            // outlives the reason: with the keyboard coming up, auto.ria's
+            // sheet was capped while PageBottomBar's toolbar `bottom` was still
+            // on it, the `bottom` then came off, and the sheet sat centred
+            // 28px below the line with a gap over the keyboard — for good,
+            // since nothing about the viewport changed again. A capped panel
+            // resting BELOW the line is given its own max-height back and
+            // shortened again from there; the new cap is written in the same
+            // task, so the frame never shows the uncapped box.
+            // "Below the line" is below where it is MEANT to rest: a panel held
+            // by its own `top` rests at that top plus the inset (auto.ria's at
+            // 64), and measured against the bare inset it would read as
+            // stuck on every pass and be uncapped and recapped forever.
+            var restLine = bar;
+            if (rec.levers.length && rec.levers[0].p === 'top') {
+              restLine = Math.max(bar, rec.levers[0].base + bar);
+            }
+            if (rec.cap && r.top > restLine + 1 &&
+                /^\d+px$/.test(el.style.getPropertyValue('max-height'))){
+              try {
+                if (rec.cap.inline) el.style.setProperty('max-height', rec.cap.inline, rec.cap.priority);
+                else el.style.removeProperty('max-height');
+                r = el.getBoundingClientRect();
+              } catch (e) { return; }
+            }
+            // Moved down past its own bottom, or still over the strip: a box
+            // with `margin: auto` between a `top` and a `bottom` is CENTRED in
+            // what is left, so a height that does not fit spills out of both
+            // ends and the `top` written does not hold it. auto.ria.com's
+            // filter sheet is `fixed; margin: auto; height: 100%` with no top
+            // of its own — Chromium reports its resolved 16px as `top` — and
+            // with the inset and PageBottomBar's `bottom` both written it came
+            // to rest 25px ABOVE the line, title row under the status bar.
+            if (r.bottom - rec.bottom0 <= 1 && r.top >= bar - 1) return;
             var s, extra = 0;
             try { s = window.getComputedStyle(el); } catch (e) { return; }
             if (s.boxSizing !== 'border-box'){
               extra = (parseFloat(s.paddingTop) || 0) + (parseFloat(s.paddingBottom) || 0) +
                 (parseFloat(s.borderTopWidth) || 0) + (parseFloat(s.borderBottomWidth) || 0);
             }
-            var want = Math.round(rec.bottom0 - r.top - extra);
-            if (!(want >= MIN_PANEL_HEIGHT_PX)) return;
             if (!rec.cap){
               rec.cap = {
                 inline: el.style.getPropertyValue('max-height'),
                 priority: el.style.getPropertyPriority('max-height'),
               };
             }
-            var css = want + 'px';
-            if (el.style.getPropertyValue('max-height') !== css){
-              try { el.style.setProperty('max-height', css, 'important'); } catch (e) {}
+            // Shortened until both ends are inside: how far the top moves per
+            // px taken off is 1 for a box held by its top or bottom and 1/2
+            // for a centred one, so it is measured from the step before and
+            // the next step sized by it — two or three layouts, not a search.
+            var perPx = 1, prevOver = -1, prevCut = 0;
+            for (var k = 0; k < 6; k++){
+              var over = Math.max(0, bar - r.top);
+              var under = Math.max(0, r.bottom - rec.bottom0);
+              if (over <= 0.5 && under <= 1) break;
+              if (prevOver > 0 && prevCut > 0){
+                var moved = (prevOver - over) / prevCut;
+                if (moved > 0.05) perPx = moved;
+              }
+              var cut = over > 0.5 ? over / perPx : under;
+              // UP, never to nearest: a `100dvh` viewport is fractional
+              // (911.238px here), and a panel rounded down stopped a quarter of
+              // a CSS px short of the screen's edge — a hairline of the white
+              // body under duckduckgo.com's dark image viewer.
+              var want = Math.ceil(r.height - cut - extra);
+              if (!(want >= MIN_PANEL_HEIGHT_PX)) return;
+              var css = want + 'px';
+              if (el.style.getPropertyValue('max-height') === css) break;
+              try { el.style.setProperty('max-height', css, 'important'); } catch (e) { return; }
+              prevOver = over; prevCut = cut;
+              try { r = el.getBoundingClientRect(); } catch (e) { return; }
             }
           }
 
@@ -427,6 +563,49 @@ object PageTopInset {
                 else el.style.removeProperty('transition');
               } catch (e) {}
             }
+          }
+
+          // A transform's vertical translation in CSS px, or null when it
+          // cannot be read (a percentage is resolved against the box).
+          function translateYOf(el, t){
+            if (!t || t === 'none') return 0;
+            var m = /^matrix\(([^)]*)\)/.exec(t);
+            if (m){ var p = m[1].split(','); return parseFloat(p[5]) || 0; }
+            m = /^matrix3d\(([^)]*)\)/.exec(t);
+            if (m){ var q = m[1].split(','); return parseFloat(q[13]) || 0; }
+            m = /^translate(Y|3d)?\(([^)]*)\)/.exec(t);
+            if (m){
+              var args = m[2].split(',');
+              var v = (m[1] === 'Y' ? args[0] : args[1] || '0').trim();
+              var n = parseFloat(v);
+              if (isNaN(n)) return null;
+              return /%$/.test(v) ? n / 100 * (el.offsetHeight || 0) : n;
+            }
+            return null;
+          }
+
+          // How far a running transform transition or animation will still
+          // move the box. A header that hides by a transform (keddr.com's
+          // `.scrollup`/`.scrolldown`, 0.3s) changes its class on the frame
+          // the slide STARTS, so the re-base reads it off screen on its way
+          // in — judged hidden, never moved, and it landed under the status
+          // bar — or on screen on its way out, moved down, and came to rest
+          // peeking out under the bar. Judged by where it is GOING instead.
+          function settledShift(el, cs){
+            var now = translateYOf(el, cs.transform);
+            var end = null;
+            try {
+              var anims = el.getAnimations ? el.getAnimations() : [];
+              for (var i = 0; i < anims.length; i++){
+                if (anims[i].playState !== 'running' || !anims[i].effect) continue;
+                var kf = anims[i].effect.getKeyframes();
+                var last = kf.length ? kf[kf.length - 1].transform : null;
+                if (last == null) continue;
+                var y = translateYOf(el, last);
+                if (y !== null) end = y;
+              }
+            } catch (e) {}
+            return now === null || end === null ? 0 : end - now;
           }
 
           function recordNow(el, cs, vh){
@@ -474,11 +653,29 @@ object PageTopInset {
               // with the inset added on top it came to rest at 0, i.e. in
               // the status bar strip, logo and search button under the
               // clock. A bar the site has sent off screen stays off it.
-              hidden: rect ? rect.bottom <= 1 : false,
+              // And a box whose own `top` is minus its height or less, which
+              // is hidden wherever it sticks: androidauthority.com's header is
+              // `sticky; top: -2.5rem` at 2.5rem tall, in flow and on screen at
+              // scroll 0 (so the rect test passes it), and with the strip added
+              // it stuck at `top: 8px` under the status bar instead of
+              // scrolling away.
+              hidden: rect ? (rect.bottom + settledShift(el, cs) <= 1 ||
+                (levers[0].p === 'top' && levers[0].base < 0 &&
+                 levers[0].base + rect.height <= 1)) : false,
+              // Hidden by its own offset, which no slide changes.
+              offTop: !!rect && levers[0].p === 'top' && levers[0].base < 0 &&
+                levers[0].base + rect.height <= 1,
               // Where its own bottom was before anything of ours moved it,
               // which is the line capPanel holds it to.
               bottom0: rect ? rect.bottom : 0,
               cap: null,
+              // What bottom0 and the cap were measured under; see measure().
+              // The inline `bottom` is PageBottomBar's toolbar shift: a
+              // bottom0 read while it was on is a line 57px up the screen
+              // once it comes off (the keyboard rising takes it away).
+              vh0: vh || 0,
+              bar0: bar,
+              bottomStyle0: el.style.getPropertyValue('bottom'),
               // The spacing is only for a bar resting ON the edge: one
               // sitting under another bar would paint over that bar.
               fill: onEdge,
@@ -595,6 +792,7 @@ object PageTopInset {
           }
 
           function restore(rec){
+            try { if (panelSizes) panelSizes.unobserve(rec.el); } catch (e) {}
             for (var i = 0; i < rec.levers.length; i++){
               var lv = rec.levers[i];
               try {
@@ -748,6 +946,20 @@ object PageTopInset {
             } catch (e) { return false; }
           }
 
+          // Whether [el] is the containing block for `fixed` descendants,
+          // i.e. whether moving it carries them along.
+          function containsFixed(el){
+            try {
+              var c = window.getComputedStyle(el);
+              return (c.transform && c.transform !== 'none') ||
+                (c.perspective && c.perspective !== 'none') ||
+                (c.filter && c.filter !== 'none') ||
+                (c.backdropFilter && c.backdropFilter !== 'none') ||
+                /paint|layout|strict|content/.test(c.contain || '') ||
+                /transform|perspective|filter/.test(c.willChange || '');
+            } catch (e) { return false; }
+          }
+
           function candidates(vw, vh){
             var out = [];
             var b = document.body;
@@ -765,6 +977,7 @@ object PageTopInset {
             var n = Math.min(all.length, MAX_SCAN);
             for (var i = 0; i < n; i++){
               var el = all[i];
+              if (ours(el)) continue;
               if (held(el) >= 0) continue;
               var cs;
               try { cs = window.getComputedStyle(el); } catch (e) { continue; }
@@ -818,7 +1031,20 @@ object PageTopInset {
                 // the bezel and bent into the curve, reachable only through the
                 // last few pixels of it. `fixed` only (a sticky box this tall
                 // is the page's own content) and constant insets only.
-                if (!((fixed || shell) && onEdge && anchored && steady())) continue;
+                // A panel held by its BOTTOM (`bottom: 0; height: 100%`, as a
+                // filter drawer that rises into place is) has no `top` of its
+                // own and is still covering the strip; its margin lever moves
+                // nothing, and capPanel shortens it from the top all the same.
+                if (!((fixed || shell) && onEdge && (anchored || r.top <= TOP_SLACK_PX) && steady())) continue;
+                // A full-width overlay is always a panel. So is a side drawer
+                // pinned to either edge: unlike a centred dialog, it owns the
+                // top edge just like a header does. Keddr's mobile menu is
+                // 330px wide, so it deliberately does not pass the full-width
+                // test on wider phones; keeping it out here put its first rows
+                // beneath the status bar.
+                var spansViewport = r.width >= vw * PANEL_WIDTH_FRACTION;
+                var sideDrawer = r.left <= TOP_SLACK_PX || r.right >= vw - TOP_SLACK_PX;
+                if (!spansViewport && !sideDrawer) continue;
               } else if (r.width < vw * MIN_WIDTH_FRACTION){
                 // Narrow: a floating button, a toast, a lightbox's close
                 // control. Nothing to reserve room for while the inset flips,
@@ -833,12 +1059,26 @@ object PageTopInset {
             // transform, a filter or a perspective becomes the containing
             // block for the fixed elements inside it, and then moving both
             // moves the inner one twice.
+            // But ONLY then: without such an ancestor a fixed box is placed
+            // against the viewport whatever it is nested in, and moving its
+            // parent leaves it where it was. auto.ria.com's filter popup is a
+            // fixed scrim (`top: 0`) holding a fixed white sheet (`top: 16px`)
+            // with nothing in between that contains it: the scrim was moved,
+            // the sheet skipped as nested, and the sheet's title row sat under
+            // the status bar.
             var kept = [];
             for (var j = 0; j < out.length; j++){
               var anc = out[j].parentElement;
               var nested = false;
+              var isFixed = false;
+              try { isFixed = window.getComputedStyle(out[j]).position === 'fixed'; } catch (e) {}
+              var contained = !isFixed;
               while (anc){
-                if (out.indexOf(anc) >= 0 || held(anc) >= 0){ nested = true; break; }
+                if (out.indexOf(anc) >= 0 || held(anc) >= 0){
+                  if (contained || containsFixed(anc)) nested = true;
+                  break;
+                }
+                if (!contained && containsFixed(anc)) contained = true;
                 anc = anc.parentElement;
               }
               if (!nested) kept.push(out[j]);
@@ -859,19 +1099,92 @@ object PageTopInset {
           //           header hides by a 0.3s transform AFTER the scroll);
           //   ramp  — how far through the first strip of scroll the page is;
           // colours as they look ON SCREEN (through the dark filter's matrix).
-          var strip = 0, stripFade = 0;
+          // Default to no blur until the bridge explicitly confirms the
+          // preference. On a reload the document-start script can run before
+          // the Java interface is ready for its first call; defaulting to true
+          // briefly painted a blur even when the setting was disabled.
+          var strip = 0, stripFade = 0, stripBlur = false, stripBlurStyle = null, stripBlurEl = null;
           try {
             var dpr0 = window.devicePixelRatio || 1;
             strip = (__topInsetBridge.strip() || 0) / dpr0;
             stripFade = (__topInsetBridge.stripFade() || 0) / dpr0;
+            stripBlur = __topInsetBridge.stripBlur();
           } catch (e) {}
           var stripScroll = 0, stripReported = '';
           var edgeColour = 'rgb(255, 255, 255)', headColour = '', headEl0 = null;
           var loopUntil = 0, loopQueued = false, lastSample = 0;
           var SAMPLE_MS = 120;
 
-          // Nothing of ours is in the page any more; kept for the observer.
-          function ours(el){ return false; }
+          // The status blur is an actual fixed node, rather than a pseudo
+          // element on `html`. This is a best-effort fallback before Android
+          // 12; newer devices apply a native masked blur outside page CSS.
+          // Keep this node out of the fixed-bar scanner and ignore its own
+          // style mutations, otherwise the bridge would try to move it too.
+          function ours(el){
+            for (var n = el; n && n !== document; n = n.parentNode){
+              if (n.nodeType === 1 && (n.hasAttribute('data-yuku-status-blur') ||
+                  n.hasAttribute('data-yuku-status-blur-style'))) return true;
+            }
+            return false;
+          }
+
+          // This is deliberately a page overlay instead of a blur on the
+          // whole WebView: backdrop-filter samples only what is already under
+          // the status bar. Match statusBarEffectStrength: fully blurred at
+          // the top, with a smooth, zero-slope tail at the bar's bottom.
+          function paintStripBlur(){
+            try {
+              if (!stripBlur || strip <= 0){
+                if (stripBlurStyle && stripBlurStyle.parentNode) stripBlurStyle.parentNode.removeChild(stripBlurStyle);
+                if (stripBlurEl && stripBlurEl.parentNode) stripBlurEl.parentNode.removeChild(stripBlurEl);
+                return;
+              }
+              if (!stripBlurStyle){
+                stripBlurStyle = document.createElement('style');
+                stripBlurStyle.setAttribute('data-yuku-status-blur-style', '');
+              }
+              if (!stripBlurEl){
+                stripBlurEl = document.createElement('div');
+                stripBlurEl.setAttribute('data-yuku-status-blur', '');
+              }
+              var height = strip;
+              var stops = [];
+              for (var i = 0; i <= 32; i++){
+                var position = i / 32;
+                var x = Math.max(0, Math.min(1, (1 - position) / 0.8));
+                var strength = x * x * x * (x * (x * 6 - 15) + 10);
+                stops.push('rgba(0,0,0,' + strength + ') ' + (position * 100) + '%');
+              }
+              var mask = 'linear-gradient(to bottom,' + stops.join(',') + ')';
+              stripBlurStyle.textContent =
+                '[data-yuku-status-blur]{position:fixed!important;z-index:2147483647!important;'
+                + 'left:0!important;top:0!important;width:100%!important;height:' + height + 'px!important;'
+                + 'pointer-events:none!important;background:transparent!important;'
+                // Allocate one long-lived compositor layer. Neither property
+                // changes as the page scrolls, so Chromium can update its
+                // backdrop without tearing down or re-promoting the filter.
+                + 'transform:translate3d(0,0,0)!important;backface-visibility:hidden!important;'
+                + 'will-change:backdrop-filter!important;'
+                + '-webkit-backdrop-filter:blur(18px)!important;backdrop-filter:blur(18px)!important;'
+                + '-webkit-mask-image:' + mask + '!important;'
+                + 'mask-image:' + mask + '!important;}';
+              if (!stripBlurStyle.parentNode) (document.head || document.documentElement).appendChild(stripBlurStyle);
+              // Keep it directly on the document root. A real child avoids
+              // the root-pseudo-element compositor bug AUTO.RIA triggers,
+              // while avoiding the site-specific transforms and containment
+              // that can make a fixed child of body scroll or clip.
+              var blurParent = document.documentElement;
+              if (stripBlurEl.parentNode !== blurParent) blurParent.appendChild(stripBlurEl);
+            } catch (e) {}
+          }
+
+          // Re-read after startup as well: this covers the document-start
+          // bridge becoming available a moment after the script, and makes a
+          // disabled preference authoritative before any later page paint.
+          function refreshStripBlur(){
+            try { stripBlur = __topInsetBridge.stripBlur() === true; } catch (e) {}
+            paintStripBlur();
+          }
 
           function rgbParts(colour){
             var m = /rgba?\(([^)]*)\)/.exec(colour || '');
@@ -958,7 +1271,11 @@ object PageTopInset {
                 // too. DNews uses an absolutely-positioned `::after` for the
                 // mobile header, so its transparent wrapper otherwise falls
                 // through to the white document canvas at the status edge.
-                var p = paintOf(el) || pseudoPaint(el);
+                // Never `html`'s pseudo-elements: `html::before` is OUR top
+                // fill (paintTopFill), painted in the last colour reported, so
+                // reading it back latched that colour for good — zdnet.com's
+                // navy header stayed on the strip over every white article.
+                var p = paintOf(el) || (el === document.documentElement ? null : pseudoPaint(el));
                 if (p){ c = p; break; }
               }
               if (!c) c = canvasColour();
@@ -978,6 +1295,13 @@ object PageTopInset {
               try { s = window.getComputedStyle(el, names[i]); } catch (e) { continue; }
               if (!s || s.content === 'none' || s.content === 'normal') continue;
               if (s.position !== 'absolute' && s.position !== 'fixed') continue;
+              // A GROUND, not a mark: androidauthority.com's list bullets are
+              // 6px absolute `li::before` squares in its green, and a wide
+              // `li` under the edge turned the status bar green. A header's
+              // pseudo ground spans its element (DNews's `::after`).
+              var pw = parseFloat(s.width), ew = 0;
+              try { ew = el.getBoundingClientRect().width; } catch (e) {}
+              if (!(pw >= ew * 0.5)) continue;
               var p = paintOf({ __yukuStyle: s });
               if (p) return p;
             }
@@ -1030,15 +1354,107 @@ object PageTopInset {
             var edge = Math.max(bar, strip);
             var heads;
             try { heads = document.querySelectorAll('[class*="header"],[class*="Header"],header'); } catch (e) { return null; }
+            // Only what is actually ON SCREEN at the edge line. zdnet.com's
+            // closed `site-header__dropdown-menu` is a lime box spanning the
+            // line and matched by name, and the status bar stayed lime over
+            // every article scrolled under it instead of following the page.
+            var hit;
+            try { hit = document.elementsFromPoint(vw / 2, edge + 1); } catch (e) { hit = []; }
             for (var i = 0; i < heads.length && i < 100; i++){
               var el = heads[i], r, s;
+              // Page-level state classes commonly contain "header" (GitHub's
+              // body has `header-overlay-fixed`). The root canvas is not a
+              // masthead; accepting it masks the section actually visible
+              // through a transparent fixed header.
+              if (el === document.body || el === document.documentElement) continue;
+              if (hit.indexOf(el) < 0) continue;
               try { r = el.getBoundingClientRect(); s = window.getComputedStyle(el); } catch (e) { continue; }
-              if (s.display === 'none' || s.visibility === 'hidden') continue;
+              if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) < 0.05) continue;
               if (s.position === 'fixed' || s.position === 'sticky' || s.position === '-webkit-sticky') continue;
               if (r.width < vw * MIN_WIDTH_FRACTION || r.height <= 0 || r.bottom < edge || r.top > edge + TOP_SLACK_PX) continue;
+              // A masthead BEGINS the document. Being under the point is not
+              // being seen: zdnet's dropdown was in the hit stack, clipped out
+              // by its header, 350px down the document.
+              if (r.top + (window.scrollY || 0) > strip + TOP_SLACK_PX * 2) continue;
               var paint = headerPaint(el);
               if (paint) return paint;
             }
+            return null;
+          }
+
+          // A number of modern sites do not call their fixed masthead a
+          // "header". Looking for a name cannot find that shape. Instead,
+          // look at the elements the compositor says are ACTUALLY under the
+          // top row, then walk up to the shallow, wide, viewport-anchored box
+          // that owns them. A transform or transition alone is deliberately
+          // insufficient: ordinary in-flow mastheads use those too, and must
+          // leave the system bar transparent as they scroll away.
+          //
+          // Keep the last one for the short tail of its transition. A hiding
+          // bar ceases to be in `elementsFromPoint` before its show animation
+          // begins; retaining its identity lets the first visible frame of the
+          // return use the same header rather than waiting for a class-name
+          // scan to find it again.
+          var visualHead = null, visualHeadUntil = 0;
+          function visualHeaderOK(el, vw, vh){
+            if (!el || el === document.documentElement || el === document.body) return false;
+            var r, s;
+            try { r = el.getBoundingClientRect(); s = window.getComputedStyle(el); } catch (e) { return false; }
+            if (s.display === 'none' || s.visibility === 'hidden' || parseFloat(s.opacity) < 0.05) return false;
+            if (r.width < vw * MIN_WIDTH_FRACTION || r.height < 12 || r.height > vh * MAX_HEIGHT_FRACTION) return false;
+            // It must be on, or immediately beside, the viewport's top. The
+            // extra height admits a bar during the last frames of a translateY
+            // exit, without mistaking an article card further down for chrome.
+            if (r.top > TOP_SLACK_PX || r.bottom < -r.height) return false;
+            return s.position === 'fixed' || s.position === 'sticky' || s.position === '-webkit-sticky';
+          }
+
+          function visualHeaderNow(){
+            var vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+            if (!vw || !vh) return null;
+            var best = null, bestShare = 0, seen = [];
+            // Three probes avoid promoting a narrow menu button or logo. The
+            // point is deliberately at the page's own top: fixed site chrome
+            // is observed, never moved by this browser.
+            var xs = [vw * 0.2, vw * 0.5, vw * 0.8];
+            for (var i = 0; i < xs.length; i++){
+              var stack;
+              try { stack = document.elementsFromPoint(xs[i], 1); } catch (e) { stack = []; }
+              for (var j = 0; j < stack.length; j++){
+                var el = stack[j], depth = 0;
+                while (el && depth++ < 10){
+                  if (seen.indexOf(el) < 0){
+                    seen.push(el);
+                    if (visualHeaderOK(el, vw, vh)){
+                      var r, s;
+                      try { r = el.getBoundingClientRect(); s = window.getComputedStyle(el); } catch (e) { break; }
+                      var op = parseFloat(s.opacity); if (isNaN(op)) op = 1;
+                      var share = Math.max(0, Math.min(1, r.bottom / Math.max(1, Math.min(r.height, strip)))) * op;
+                      if (share > bestShare){ best = el; bestShare = share; }
+                    }
+                  }
+                  el = el.parentElement;
+                }
+              }
+            }
+            if (best){
+              visualHead = best;
+              visualHeadUntil = Date.now() + 900;
+              return { el: best, share: bestShare };
+            }
+            // A tracked bar may be wholly hidden for part of its transition.
+            // Return it with zero share until it either comes back or expires;
+            // its colour is then harmless and the page edge remains visible.
+            if (visualHead && Date.now() < visualHeadUntil && visualHead.isConnected){
+              var rr, ss;
+              try { rr = visualHead.getBoundingClientRect(); ss = window.getComputedStyle(visualHead); } catch (e) { rr = null; }
+              if (rr && visualHeaderOK(visualHead, vw, vh)){
+                var oo = parseFloat(ss.opacity); if (isNaN(oo)) oo = 1;
+                return { el: visualHead, share: Math.max(0, Math.min(1,
+                  rr.bottom / Math.max(1, Math.min(rr.height, strip)))) * oo };
+              }
+            }
+            visualHead = null;
             return null;
           }
 
@@ -1061,6 +1477,34 @@ object PageTopInset {
               if (isNaN(op)) op = 1;
               var share = Math.max(0, Math.min(1, (r.bottom - bar) / Math.max(1, Math.min(r.height, strip)))) * op;
               if (share > bestShare){ bestShare = share; best = s.el; }
+            }
+            // The normal browser page begins below the native status bar, so
+            // its fixed header must be OBSERVED rather than moved. Keeping
+            // this separate from `shifted` is important: these are site
+            // transitions (Keddr slides one back in while scrolling up,
+            // GitHub changes its own header face), not boxes the browser owns.
+            // Their visible share is enough to let the native strip follow
+            // their paint without ever touching their geometry.
+            if (!best){
+              var heads;
+              try { heads = document.querySelectorAll('header,[class*="header"],[class*="Header"]'); } catch (e) { heads = []; }
+              for (var h0 = 0; h0 < heads.length && h0 < 160; h0++){
+                var el0 = heads[h0], r0, st0;
+                try { r0 = el0.getBoundingClientRect(); st0 = window.getComputedStyle(el0); } catch (e) { continue; }
+                var p0 = st0.position;
+                if (p0 !== 'fixed' && p0 !== 'sticky' && p0 !== '-webkit-sticky') continue;
+                if (r0.height <= 0 || r0.width < vw * MIN_WIDTH_FRACTION) continue;
+                if (r0.top > TOP_SLACK_PX || r0.bottom <= 0) continue;
+                if (st0.display === 'none' || st0.visibility === 'hidden') continue;
+                var op0 = parseFloat(st0.opacity);
+                if (isNaN(op0)) op0 = 1;
+                var share0 = Math.max(0, Math.min(1, r0.bottom / Math.max(1, Math.min(r0.height, strip)))) * op0;
+                if (share0 > bestShare){ bestShare = share0; best = el0; }
+              }
+            }
+            if (!best){
+              var visual = visualHeaderNow();
+              if (visual){ best = visual.el; bestShare = visual.share; }
             }
             return { el: best, share: bestShare };
           }
@@ -1103,6 +1547,10 @@ object PageTopInset {
           // scrolls away with the padding it sits on.
           var fillStyle = null, fillKey = '';
           function paintTopFill(colour){
+            // With a native safe top edge there is no blank document band
+            // to paint. A pseudo-element here would cover the site's first
+            // row and then scroll away independently of its fixed header.
+            if (!(content > 0)) colour = '';
             var key = colour ? colour + '|' + strip : '';
             if (key === fillKey) return;
             fillKey = key;
@@ -1144,28 +1592,37 @@ object PageTopInset {
             }
             var now = Date.now();
             var sample = force || now - lastSample >= SAMPLE_MS;
+            if (sample){
+              lastSample = now;
+              try { edgeColour = sampleEdge(); } catch (e) {}
+            }
             var h = headerNow();
             var share = h.share;
             if (h.el && (sample || h.el !== headEl0)){
               var hp = null;
               try { hp = headerPaint(h.el); } catch (e) {}
               headEl0 = h.el;
-              headColour = hp || '';
+              // A fixed header may deliberately have no paint of its own:
+              // GitHub's marketing masthead is a transparent fixed box over
+              // the document's dark start, and changes its face as sections
+              // pass beneath it. The colour actually seen through that box is
+              // the edge ground, so it still owns the system-bar strip. Read
+              // the ground first above, then use it here rather than falling
+              // back to the generic black icon scrim.
+              headColour = hp || edgeColour;
             }
             if (!headColour) share = 0;
-            if (sample){
-              lastSample = now;
-              try { edgeColour = sampleEdge(); } catch (e) {}
-            }
             // At its top a page has nothing under the bar but its own blank
             // padding (the app covers it solid); over the first strip's worth
             // of scroll that gives way to the veil.
             var ramp = Math.max(0, Math.min(1, stripScroll / Math.max(8, strip)));
             reportStrip(argb(onScreen(edgeColour)), headColour ? argb(onScreen(headColour)) : 0,
               Math.round(share * 50), Math.round(ramp * 50));
-            // What the cap shows over the band: the header where one rests on
-            // the edge (StatusStripReport's own rule), otherwise the ground.
-            paintTopFill(headColour && share >= 0.5 ? headColour : edgeColour);
+            // Only a real viewport-fixed header owns an opaque system-bar
+            // extension. An ordinary page keeps the band truly transparent;
+            // painting its sampled edge here is what made sites such as ZDNET
+            // jump between transparent and filled states while scrolling.
+            paintTopFill(headColour && share >= 0.5 ? headColour : '');
           }
 
           // Runs the strip per frame for [ms] past the last thing that moved,
@@ -1203,6 +1660,7 @@ object PageTopInset {
           }
 
           function measure(){
+            try { updateStartHold(); } catch (e) {}
             applyPad();
             if (bar <= 0 || fullscreenElement()){
               // Nothing to hold anything off: everything is given back
@@ -1240,6 +1698,16 @@ object PageTopInset {
                 } catch (e) {}
               }
               if (!live){ restore(shifted[i]); shifted.splice(i, 1); continue; }
+              // A panel's cap only ever shortens it, and its bottom0 is a
+              // line on the viewport it was measured on: the keyboard going
+              // down left auto.ria.com's filter sheet capped to the half
+              // screen it had above the keyboard, centred in the full one.
+              // Given back and taken up fresh on the next pass (the restore
+              // is a mutation, so there is one).
+              if (shifted[i].panel && (shifted[i].vh0 !== vh || shifted[i].bar0 !== bar ||
+                  el2.style.getPropertyValue('bottom') !== shifted[i].bottomStyle0)){
+                restore(shifted[i]); shifted.splice(i, 1); continue;
+              }
               // The site restyled it by class, and our inline `!important`
               // beats whatever that class says: kontur.systems' top-right
               // buttons take `.shift-down` to clear its counters bar, and
@@ -1254,6 +1722,15 @@ object PageTopInset {
                 var fresh = record(el2, cs3, vh);
                 fresh.shell = old.shell;
                 shifted[i] = fresh;
+              }
+              // A bar held as hidden that the site has brought back without a
+              // class change (or whose slide in has since been read): nothing
+              // of ours is written to it, so its rect is the site's own.
+              if (shifted[i].hidden && !shifted[i].offTop){
+                try {
+                  var r4 = el2.getBoundingClientRect();
+                  if (r4.bottom + settledShift(el2, window.getComputedStyle(el2)) > 1) shifted[i].hidden = false;
+                } catch (e) {}
               }
             }
             // A page that scrolls again (the lock came off) has no app shell:
@@ -1282,7 +1759,9 @@ object PageTopInset {
             // actually left it, and a panel nested in another one would
             // otherwise be measured against a box that has not moved yet.
             for (var p2 = 0; p2 < shifted.length; p2++){
-              if (shifted[p2].panel) capPanel(shifted[p2]);
+              if (!shifted[p2].panel) continue;
+              capPanel(shifted[p2]);
+              try { if (panelSizes) panelSizes.observe(shifted[p2].el); } catch (e) {}
             }
             // After the bars, so one being moved is known to be held.
             applyStartFill();
@@ -1290,9 +1769,60 @@ object PageTopInset {
             try { paintStrip(true); } catch (e) {}
           }
 
+          // A held panel that changes SIZE is re-measured in the same frame.
+          // The keyboard resizes the viewport, and `resize` is dispatched a
+          // frame after the new size has already been laid out and painted —
+          // one frame of auto.ria's `height: 100%` sheet centred at its old
+          // cap. A ResizeObserver is delivered after layout and BEFORE paint.
+          // Our own cap resizes the panel too; that answer is a no-op write,
+          // and the burst bound in schedule() holds either way.
+          var panelSizes = null;
+          try {
+            if (window.ResizeObserver) {
+              panelSizes = new ResizeObserver(function(){ schedule(true); });
+            }
+          } catch (e) {}
+
           var pending = false;
           var lastRun = 0;
-          function schedule(){
+          // A change the OBSERVER saw is answered in its own microtask, i.e.
+          // before the frame it happened in is painted — not a timeout later.
+          // A popup inserted by the site was otherwise painted once where the
+          // site put it, once where we moved it, again where PageBottomBar's
+          // write (a frame later, from its own timeout) left it, and a fourth
+          // time 250ms on when the throttle let this correct that: auto.ria's
+          // brand sheet visibly hopped 16 → 63 → 34 → 48 as it opened. Run
+          // inside the checkpoint, the two scripts answer each other's writes
+          // there too and the first painted frame is the settled one.
+          // Bounded PER FRAME (and per second), so two writers that disagree
+          // cost a few runs and fall back to the throttle, never a microtask
+          // loop that hangs the page. Not a time window from the last run:
+          // PageBottomBar's answer to the keyboard reaches the page ~50ms
+          // after ours, and the keyboard itself can come 200ms after a sheet
+          // opened — both landed outside a 50ms window and inside the
+          // throttle, and waited 250ms for it.
+          var nowRuns = 0, nowFrameQueued = false, nowSecStart = 0, nowSecRuns = 0;
+          function runNowAllowed(){
+            var t = Date.now();
+            if (t - nowSecStart > 1000){ nowSecStart = t; nowSecRuns = 0; }
+            if (nowRuns >= 4 || nowSecRuns >= 24) return false;
+            nowRuns++; nowSecRuns++;
+            if (!nowFrameQueued && window.requestAnimationFrame){
+              nowFrameQueued = true;
+              requestAnimationFrame(function(){ nowFrameQueued = false; nowRuns = 0; });
+            }
+            return true;
+          }
+          function schedule(now){
+            // Whatever is pending: a keyboard change fires scroll events that
+            // queue a throttled run first, and waiting behind it is the 230ms
+            // step this path exists to remove. The queued run finds nothing
+            // left to write.
+            if (now === true && runNowAllowed()){
+              lastRun = Date.now();
+              try { measure(); } catch (e) {}
+              return;
+            }
             if (pending) return;
             pending = true;
             var wait = Math.max(0, THROTTLE_MS - (Date.now() - lastRun));
@@ -1315,20 +1845,23 @@ object PageTopInset {
             try { measure(); } catch (e) {}
           };
 
-          window.__topInsetStrip = function(px, fadePx){
+          window.__topInsetStrip = function(px, fadePx, blur){
             var dpr = window.devicePixelRatio || 1;
             strip = (px || 0) / dpr;
             stripFade = (fadePx || 0) / dpr;
+            stripBlur = blur !== false;
+            paintStripBlur();
             try { measure(); } catch (e) {}
           };
 
           function boot(){
             try { window.__topInset(__topInsetBridge.content(), __topInsetBridge.bar()); } catch (e) {}
+            refreshStripBlur();
             try {
               // Our own strip's writes are not the page changing.
               new MutationObserver(function(list){
                 for (var i = 0; i < list.length; i++){
-                  if (!ours(list[i].target)){ schedule(); return; }
+                  if (!ours(list[i].target)){ schedule(true); return; }
                 }
               }).observe(document.documentElement, {
                 childList: true, subtree: true, attributes: true,
@@ -1350,14 +1883,25 @@ object PageTopInset {
             ['transitionrun', 'transitionend', 'animationstart', 'animationend'].forEach(function(n){
               document.addEventListener(n, function(){ kickStrip(450); }, { capture: true, passive: true });
             });
+            // A panel that slides or fades in is measured mid-entrance, off the
+            // edge, and not taken up; nothing mutates when it lands, so its
+            // arrival is what asks again (auto.ria.com's filters).
+            ['transitionend', 'animationend'].forEach(function(n){
+              document.addEventListener(n, schedule, { capture: true, passive: true });
+            });
             // Stylesheets and web fonts land without a mutation; the ground
             // read before them is the unstyled page's white.
-            window.addEventListener('load', function(){ try { paintStrip(true); } catch (e) {} });
+            window.addEventListener('load', function(){
+              refreshStripBlur();
+              try { paintStrip(true); } catch (e) {}
+            });
             [300, 1000, 2500].forEach(function(ms){
               setTimeout(function(){ try { paintStrip(true); } catch (e) {} }, ms);
             });
-            window.addEventListener('resize', schedule);
-            window.addEventListener('orientationchange', schedule);
+            // Answered in the same frame — see schedule() and PageBottomBar's
+            // resize listener.
+            window.addEventListener('resize', function(){ schedule(true); });
+            window.addEventListener('orientationchange', function(){ schedule(true); });
             window.addEventListener('load', schedule);
             // Both ways: entering gives every shift back before the fullscreen
             // element can be found as a panel, leaving restores the inset for

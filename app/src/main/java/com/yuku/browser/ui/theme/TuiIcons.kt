@@ -17,14 +17,18 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.NorthEast
 import androidx.compose.material.icons.filled.NorthWest
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.sharp.MoreVert
 import androidx.compose.material3.LocalContentColor
@@ -55,16 +59,17 @@ import androidx.compose.ui.unit.sp
  * own monospace face — `<` and `>` for back and forward, `^` and `v` for the
  * two the find bar steps through, `x` closes, `+` adds, `/` searches (the
  * search key in `less`, `vim` and `man`), `:` is the menu (it is what opens
- * one in a modal editor), `\` and `/` are the two diagonal arrows, `=` the
- * drag handle. Nothing here is a picture of a key: it IS the key, set in the
+ * one in a modal editor), `c` copies, `r` reloads, `\` and `/` are the two
+ * diagonal arrows, `=` the drag handle. Nothing here is a picture of a key:
+ * it IS the key, set in the
  * same face at the same weight as the words beside it, which is what a
  * terminal has instead of an icon.
  *
  * That list is deliberately short. An earlier pass ran the idea through the
  * whole interface — single letters for the nouns, `b` for bookmark, `h` for
  * history — and a letter standing in for a picture reads as a keyboard
- * legend rather than as a control. A character earns its place only where it
- * is the symbol for the thing rather than the initial of its name.
+ * legend rather than as a control. The two retained commands are ubiquitous
+ * terminal verbs and sit with labelled commands, so `c` and `r` remain clear.
  *
  * **Half two: Material Sharp.** Everything else is the SAME glyph the app
  * already draws, in Material's square-cornered cut. That is the cheapest
@@ -91,6 +96,10 @@ internal val TuiIconGlyphs: Map<ImageVector, String> = mapOf(
     Icons.Filled.Search to "/",
     Icons.Outlined.Search to "/",
     Icons.Outlined.MoreVert to ":",
+    Icons.Filled.ContentCopy to "c",
+    Icons.Outlined.ContentCopy to "c",
+    Icons.Filled.Refresh to "r",
+    Icons.Outlined.Refresh to "r",
     // The suggestion row's "put this in the field" arrow points up and to
     // the left, and so does a backslash; its sibling points the other way.
     Icons.Filled.NorthWest to "\\",
@@ -149,9 +158,14 @@ internal fun TuiGlyphIcon(
         val color = tint.takeOrElse { LocalContentColor.current }
         val glow = tuiGlow(color)
         val context = LocalContext.current
-        val paint = remember(context) {
+        // Command initials carry less visual mass than a symbolic key: c/r
+        // should read as compact commands in the address bar, not bold labels.
+        val paint = remember(context, glyph) {
             android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-                typeface = ResourcesCompat.getFont(context, R.font.iosevka_term_bold)
+                typeface = ResourcesCompat.getFont(
+                    context,
+                    if (glyph == "c" || glyph == "r") R.font.iosevka_term_semibold else R.font.iosevka_term_bold,
+                )
             }
         }
         // Centred by INK, not by line box. A character's box is the font's

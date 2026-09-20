@@ -30,6 +30,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import com.yuku.browser.ui.theme.FieldBg
+import com.yuku.browser.ui.theme.frostedIf
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -207,6 +208,7 @@ fun SettingsScreen(
     specialTheme: SpecialTheme,
     pageZoom: Int,
     pageLens: Boolean,
+    statusBarBlur: Boolean,
     translucentSheets: Boolean,
     translucency: Float,
     autoFocusNewTabKeyboard: Boolean,
@@ -256,6 +258,7 @@ fun SettingsScreen(
     onSelectSpecialTheme: (SpecialTheme) -> Unit,
     onSetZoomStep: (Int) -> Unit,
     onTogglePageLens: () -> Unit,
+    onToggleStatusBarBlur: () -> Unit,
     onToggleTranslucentSheets: () -> Unit,
     onSetTranslucency: (Float) -> Unit,
     onToggleAutoFocusNewTabKeyboard: () -> Unit,
@@ -405,7 +408,9 @@ fun SettingsScreen(
                             onSelectSpecialTheme = onSelectSpecialTheme,
                             onSetZoomStep = onSetZoomStep,
                             pageLens = pageLens,
+                            statusBarBlur = statusBarBlur,
                             onTogglePageLens = onTogglePageLens,
+                            onToggleStatusBarBlur = onToggleStatusBarBlur,
                             translucentSheets = translucentSheets,
                             onToggleTranslucentSheets = onToggleTranslucentSheets,
                             translucency = translucency,
@@ -952,9 +957,15 @@ internal fun <T> Picker(entries: List<T>, selected: T, label: (T) -> String, onS
                 onClick = { onSelect(entry) },
                 shape = SegmentedButtonDefaults.itemShape(index = index, count = entries.size),
                 colors = SegmentedButtonDefaults.colors(
+                    // Frosted sheets (reader / site settings): the segments
+                    // let the glass through like every other control on it.
+                    // The picked segment stays solid: an accent thinned over
+                    // frost washes out to a tint of whatever page is under it.
                     activeContainerColor = AccentColor,
                     activeContentColor = Color.White,
                     activeBorderColor = AccentColor,
+                    inactiveContainerColor = MaterialTheme.colorScheme.surface
+                        .frostedIf(com.yuku.browser.ui.theme.FROSTED_ELEMENT_ALPHA),
                 ),
             ) {
                 Text(label(entry))
@@ -962,6 +973,17 @@ internal fun <T> Picker(entries: List<T>, selected: T, label: (T) -> String, onS
         }
     }
 }
+
+/** The Translucency slider's intervals: 4 of them, i.e. five positions. */
+private const val OPACITY_STEPS = 4f
+
+/** A Slider's tracks, let through under translucent sheets like the rest. */
+@Composable
+internal fun frostedSliderColors() = androidx.compose.material3.SliderDefaults.colors(
+    activeTrackColor = AccentColor,
+    inactiveTrackColor = MaterialTheme.colorScheme.secondaryContainer
+        .frostedIf(com.yuku.browser.ui.theme.FROSTED_ELEMENT_ALPHA),
+)
 
 @Composable
 private fun Divider() {
@@ -1343,10 +1365,11 @@ private fun EngineRow(
         Row(
             Modifier
                 .fillMaxSize()
-                // Opaque, so the swipe backdrop shows only where the row has
-                // actually slid away — and so a held row covers the ones it
-                // is being dragged over.
-                .background(BarBg)
+                // Aero's bar material is translucent.  A list row must still
+                // be opaque: otherwise the swipe-to-hide action underneath
+                // bleeds through at rest, turning each engine into what looks
+                // like an accented field.  The pane has this same ground.
+                .background(BarBg.copy(alpha = 1f))
                 .clickable(onClick = onClick)
                 .padding(start = 16.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -1663,6 +1686,8 @@ private fun AppearancePane(
     onSetZoomStep: (Int) -> Unit,
     pageLens: Boolean,
     onTogglePageLens: () -> Unit,
+    statusBarBlur: Boolean,
+    onToggleStatusBarBlur: () -> Unit,
     translucentSheets: Boolean,
     onToggleTranslucentSheets: () -> Unit,
     translucency: Float,
@@ -1772,6 +1797,15 @@ private fun AppearancePane(
     PickerLabel("Dark mode")
     Picker(PageDarkMode.entries, pageDarkMode, { it.label }, onSelectPageDarkMode)
     Hint("Sites with a dark theme use it, sites without are forced to be dark.")
+    MenuRow(
+        Icons.Default.BlurOn,
+        "Status bar blur",
+        onClick = onToggleStatusBarBlur,
+        toggledTo = !statusBarBlur,
+    ) {
+        MenuSwitch(checked = statusBarBlur, onToggle = onToggleStatusBarBlur)
+    }
+    Hint("Softens page content as it reaches the status bar.")
     TextSizeRow(zoom = pageZoom, onSetStep = onSetZoomStep)
     Hint("Scales text on every page to $pageZoom%. Sites that lay themselves out for the screen reflow to it.")
 
@@ -1853,12 +1887,16 @@ private fun TextSizeRow(zoom: Int, onSetStep: (Int) -> Unit) {
 }
 
 /**
- * The Translucency slider: continuous, nearly transparent at the left and
- * nearly solid at the right, laid out like [TextSizeRow]. It moves the frosted
- * canvas and the elements on it together (see `frostCanvasAlpha`).
+ * The Translucency slider: FIVE fixed steps (0, .25, .5, .75, 1), nearly
+ * transparent at the left and nearly solid at the right, laid out like
+ * [TextSizeRow]. It moves the frosted canvas and the elements on it together
+ * (see `frostCanvasAlpha`). A value stored by the old continuous slider is
+ * shown on its nearest step and snapped on the next change.
  */
 @Composable
 private fun OpacityRow(value: Float, onChange: (Float) -> Unit) {
+    val haptics = rememberHaptics()
+    val step = kotlin.math.round(value.coerceIn(0f, 1f) * OPACITY_STEPS) / OPACITY_STEPS
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1871,9 +1909,16 @@ private fun OpacityRow(value: Float, onChange: (Float) -> Unit) {
             style = MaterialTheme.typography.bodyLarge,
         )
         Slider(
-            value = value,
-            onValueChange = onChange,
+            value = step,
+            onValueChange = {
+                val next = kotlin.math.round(it * OPACITY_STEPS) / OPACITY_STEPS
+                if (next != step) {
+                    haptics.tick()
+                    onChange(next)
+                }
+            },
             valueRange = 0f..1f,
+            steps = OPACITY_STEPS.toInt() - 1,
             modifier = Modifier
                 .weight(1f)
                 .padding(start = 16.dp),

@@ -690,15 +690,32 @@ from outside WebView there is no other door.
   `drawStatusStrip` paints it over the live page AND the thumbnail stand-in at
   `1 - shrink`: none on a card, all of it at full screen, growing with the
   zoom. The top FILL is lens-only for the same reason. Looks, never a switch:
-  `veil` (edge colour, 0.72 at the screen's edge eased to 0 at
-  `STATUS_STRIP_FADE` below the bar, 13 dithered native-gradient stops —
-  linear stops read as bands), `cap` (solid, only at the page's top where the
-  bar is over blank padding, gone over the first strip of scroll), `head` (a
-  header's own paint — pseudo-elements included, github.com's is `::before` —
-  at the share of the header on screen; the veil gives way to it). The blur
-  is `StatusBlur`, a RenderEffect on the WebView VIEW (API 33): a capture
-  draws the view's content, never its node's effect, and a Compose layer
-  effect would crop the strip hanging above the page box. Colours ease in
+  `veil` (a PLAIN overlay: edge colour at 0.85, flat over the top half of the
+  bar, linear to 0 at `STATUS_STRIP_FADE` = 4dp below it — narrow and dense,
+  hugging the screen's edge), `cap` (solid, only at the page's
+  top where the bar is over blank padding, gone over the first strip of
+  scroll), `head` (a header's own paint — pseudo-elements included,
+  github.com's is `::before` — at the share of the header on screen; the veil
+  gives way to it). There is deliberately NO blur and no long eased tail: a
+  `StatusBlur` RenderEffect on the WebView plus a 0.72 veil eased over 24dp
+  read as a haze filter over the page, and was removed. A bar that hides by a
+  TRANSFORM (keddr.com's header) is judged hidden by where its running
+  transition will LAND (`settledShift`), not by the frame it is on, and a
+  held-hidden bar is re-checked every measure — judged mid-slide, it was
+  never moved and slid back in under the bar. **The edge sampler never reads
+  `html`'s pseudo-elements**: `html::before` is our own top fill
+  (`paintTopFill`), painted in the last reported colour, and reading it back
+  LATCHED that colour — zdnet.com's strip stayed its navy header (and, before
+  `topHeaderPaint` was limited to boxes that begin the document and are in
+  the hit stack, the lime of a clipped `site-header__dropdown-menu`) over
+  every white article. **A masthead that leaves the flow keeps its room**
+  (`updateStartHold`): keddr.com's mobile header turns `fixed` once the
+  scroll passes its own height, with no placeholder, and under our padding
+  that switch lands while it is still on screen — the page jumped by 53px
+  each way. When a short full-width box the document starts with turns
+  fixed/absolute AND its parent shrinks by its height, that height is added
+  to the body padding (same microtask as the site's class change) until it
+  returns to the flow. Colours ease in
   `StatusStripPaint` and are read in draw only. Google paints an image's
   frame in the image's dominant colour, so the ground sampler skips any box
   no bigger than twice a picture it holds, and anything under half the page's
@@ -727,7 +744,23 @@ from outside WebView there is no other door.
   ONLY when the lever property itself transitions: `none` cancels every
   running transition, keddr's header slide included. Shells are taken only
   at scroll 0 and released once the document scrolls (a menu's scroll lock
-  reads as "cannot scroll"). Panels get no box-shadow fill under the strip
+  reads as "cannot scroll"). **A fixed box inside a moved fixed box is
+  moved too** unless something between them (`transform`, `filter`,
+  `contain`…) makes it the containing block (`containsFixed`) — auto.ria's
+  filter sheet sits in a fixed scrim and was left under the bar. **A panel's
+  cap is iterated, not computed**: a `fixed; margin: auto` sheet with no top
+  of its own reports its resolved top, and with `top` + PageBottomBar's
+  `bottom` written it is CENTRED, spilling above the line; `capPanel`
+  shortens until the top lands. A panel is re-taken fresh when `innerHeight`
+  or the inset changes (the keyboard), since a cap only ever shortens — and
+  when PageBottomBar's inline `bottom` on it changes (a `bottom0` read under
+  it is stale once it comes off). PageBottomBar's `capTo` never GROWS a panel
+  whose top is already at/below its line, or the two scripts trade 23px every
+  250ms. **Both scripts answer observed changes IMMEDIATELY** (MutationObserver
+  microtask, `resize`, a ResizeObserver on held panels — delivered before
+  paint), bounded to 4 runs a frame / 24 a second, so a popup's first painted
+  frame is already settled; throttled answers painted every step in between.
+  Panels get no box-shadow fill under the strip
   (a 0.8-black scrim made opaque showed as a black band through the veil).
   The inset also goes into `html`'s `scroll-padding-top` (anchors, focus),
   and the error screen is laid out up under the bar like the page.
@@ -1141,9 +1174,10 @@ from outside WebView there is no other door.
   read as an interrupt: one warm mark on a neutral ground is an event; the
   same mark on a ground already leaning that way was just the warmest thing
   in a warm room. The skill's light ramp is 0% throughout for this reason.
-  Hue survives in three places only, all of them marks rather than grounds:
-  `primary`, `error`, and the status green. Still tinted and deliberately
-  left so: `onAmber` (#171410), which is only ever drawn ON the accent.
+  That is still true of the CANVAS, but no longer of the whole palette: the
+  base `Dot` values are 0%, and at theme build time every ELEMENT role is
+  carried onto the user's accent hue (see "The ONLY colour difference" below).
+  The status green and `error` keep their own hues.
   **The canvas is the ORDINARY theme's canvas.** The greys used to start a
   few points down (paper #F3F3F3) and the dark end was OLED black with its
   raised tones at #0C0C0C/#161616, which read as a DIMMER version of the app
@@ -1218,14 +1252,19 @@ from outside WebView there is no other door.
   LIGHT accent, `onPrimary` is the ink at BOTH ends — except a Switch's checked
   thumb, which Material draws in `onPrimary` and which came out as a black
   puck on a bright track, so `MenuSwitch` gives it the SURFACE colour there
-  instead. Red survives only as `error`. Two things keep the canvas
-  monochrome: `surfaceTint` points back at the surface (it is what Material
-  mixes into a raised one, and every sheet in the app is raised — an accent
-  there is a hue across the whole screen), and `accentWash(alpha)` hands back
-  INK rather than accent under this theme, so the thinned tints (the empty
-  canvas's watermark, an active quick tile, the strong-password chip) carry
-  their emphasis by value. A solid accent mark stays accent everywhere; it is
-  only the washes that give way.
+  instead. Red survives only as `error`.
+  **The ONLY colour difference from the default look is the CANVAS.** Page,
+  sheets, toolbar and the switcher/empty ground (`background`, `surface`,
+  `surfaceContainerLow`/`Lowest`/`Container`, `surfaceDim`, `emptyBg`) stay
+  pure neutral; every ELEMENT on them — fields, tiles, hairlines, inks and so
+  icons, the containers, `inkMuted`/`inkFaint`, the empty watermark — takes
+  the accent's hue exactly as `tonalColorScheme` tints the default look's
+  (`nothingElementsTinted` / `nothingTint`: seed hue, `tonalColorScheme`'s
+  saturation scale per role, the grey's OWN lightness, so contrast is
+  unchanged; a neutral seed stays grey). `surfaceTint` still points back at
+  the surface (Material mixes it into every raised sheet, which would tint
+  the canvas). `accentWash` no longer hands back ink under this theme — a
+  wash under a tile or chip is an element, not the canvas.
   **The reference is the `nothing-design` skill** (github.com/dominikmartn/
   nothing-design-skill) — its `SKILL.md` plus `references/tokens.md`,
   `components.md`, `platform-mapping.md`. Type scale, iconography rules and
@@ -1329,9 +1368,8 @@ from outside WebView there is no other door.
   20dp rounded capsules on a 3–4dp line; the dots are the same mechanism with
   the cell shrunk to the bar's own height. Two capsule shapes were what made
   it read as a dashed rule rather than as the theme's grid. And the **quick-action tiles are outlined modules**, carrying
-  state on the outline: a hairline off, the accent itself on. That is not a
-  breach of the wash rule — a 1dp accent rule is a MARK, and the outline is
-  standing in for the wash `accentWash` refuses.
+  state on the outline: a hairline off, the accent itself on (plus the
+  accent wash when on).
   **The theme has its own icon set** (`ui/theme/NothingIcons.kt`), swapped in
   by an `Icon` wrapper (`ui/theme/SpecialIcon.kt`) that the ui files import
   in place of Material's — the same mechanism as `SpecialText`'s `Text`, and
@@ -1648,6 +1686,45 @@ from outside WebView there is no other door.
   order arrays like TUI and Nothing and unlike 98. The fallback-splash
   caveat applies here too.
 
+- **Translucent sheets** (Default and Nothing only, API 33; `LocalFrosted`,
+  `LocalFrostOpacity`, `ui/theme/AeroPageGlass.kt`): the page is blurred
+  under the sheet / toolbar / find bar by `frostedSheetGlass`, and the fill
+  on top is translucent. Same rules in both looks. The slider (0 clear .. 1
+  solid) has FIVE fixed steps (0/.25/.5/.75/1; `OpacityRow` snaps, and an old
+  continuous value is shown on its nearest step) and moves EVERYTHING, not
+  just the canvas: `frostCanvasAlpha` 2%→98.5%
+  (eased ^1.3), `frostElementAlpha` 10%→100% for fields/rows/off tiles
+  (always above the canvas),
+  `frostBlurDp` 10→56dp, and `FrostMaterial.over` — saturation lift
+  1.55→1.15, luminosity pull toward the sheet's ground 0.35→0.95, rim ×1.5→0.7
+  (at the clear end the page keeps its own light and the rim says "glass").
+  Grounds of controls on a frosted surface go through `frostedIf(...)` or they
+  are opaque slabs (the shared `Picker`'s unselected segments and
+  `frostedSliderColors()`'s inactive track). **STATE colours never do**: switch
+  tracks (both), the picked segment, a slider's active track and an ON quick
+  tile (wash composited over a solid `FieldBg`) stay solid — thinned over
+  frost they washed out to the page's colour. There is deliberately no
+  accent alpha any more. **Nothing's loading ruler band** sits
+  ABOVE the toolbar, outside the blurred region, so it publishes its reveal
+  through `RulerBand` (snapshot state holding a lambda) and the toolbar's
+  frost rect grows up by `RulerBand.height * reveal`. **Nothing's new-tab
+  oval is always opaque.**
+  **The toolbar does NOT slide away under a + / menu sheet** (it did, over
+  `SHEET_BAR_OUT_MS`, and was seen going through a translucent sheet): it
+  stays laid out and in place, and only the part NOT under the sheet is drawn:
+  its layer is clipped at the sheet's top edge every frame (`size.height -
+  sheetHeightAnim - translationY`, open upward for the ruler band), and at
+  `sheetHeightAnim >= bar height` it is alpha 0 with its frost region
+  dropped. `sheetBarSlide` is for full-screen destinations
+  only. **Tab list frost**: `ListPaneBounds.rect` is carried `SHEET_CORNER`
+  on under the toolbar line (the frost shader rounds all four corners; the
+  sheet itself is square there), and the list's clip corner is capped at
+  `NOTHING_MAX_CORNER` under Nothing to match `frostSheetCorner`.
+- **Default-look grounds carry the swatch visibly** (`GROUND_SAT_LIGHT` 0.4 /
+  `GROUND_SAT_DARK` 0.3 in `tonalColorScheme`, every surface role): at the
+  old 0.12–0.2 a fixed swatch left the canvas (Settings most visibly) plain
+  white where Auto's wallpaper neutrals are tinted. Nothing's element tints
+  use the same container scale (0.35).
 - **Accents tint the TUI, Nothing and Aero looks; 98 they replace.** The fixed
   swatches (`AccentTheme.color()`) are Material's A-series, at or near full
   saturation — the old 600 ramp was the muted set a component library picks

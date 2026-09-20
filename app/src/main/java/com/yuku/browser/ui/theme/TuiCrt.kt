@@ -221,16 +221,16 @@ private const val BLOOM_CORE_DP = 2f
 private const val BLOOM_SKIRT_DP = 9f
 
 /** Light end: tighter — ink softening at its edges, not a shadow cast. */
-private const val BLEED_CORE_DP = 1f
-private const val BLEED_SKIRT_DP = 3.5f
+private const val BLEED_CORE_DP = 1.25f
+private const val BLEED_SKIRT_DP = 4.5f
 
 private const val BLOOM_SKIRT = 0.6f
 
 /** Additive, so this can sit high without hazing the ground. */
 private const val BLOOM_ALPHA_DARK = 1.0f
 
-/** Multiply darkens whatever it touches — kept well under the dark end's. */
-private const val BLOOM_ALPHA_LIGHT = 0.22f
+/** Paper ink feathers a little; a large multiply halo reads as a smudge. */
+private const val BLOOM_ALPHA_LIGHT = 0.30f
 
 // A steeper curve than it was (1.6 / 0.12): the glow now tracks how BRIGHT a
 // stroke is, not merely that it is there. White type still saturates it; a
@@ -242,17 +242,84 @@ private const val BLOOM_FLOOR = 0.35f
 private const val BLOOM_GRAIN = 0.18f
 
 /**
- * The CRT raster behind a piece of chrome's content — its background only,
- * never the type or icons on it. A no-op in every other theme, the way
- * `bevel98If` owns its branch.
+ * The shared substrate for the TUI's app-owned surfaces. Unlike a CRT raster,
+ * it has no direction or regular spacing: a dense field of tiny monochrome
+ * phosphor clusters makes the navbar, sheets and empty canvas feel like one
+ * display surface without putting lines across a page preview.
+ */
+private const val TUI_PHOSPHOR_TILE = 256
+private const val TUI_FINE_PHOSPHOR_TILE = 384
+private const val TUI_PHOSPHOR_LIGHT_ALPHA = 0.14f
+private const val TUI_PHOSPHOR_DARK_ALPHA = 0.16f
+
+private fun phosphorTexture(tile: Int, marks: Int, seed: Int): Bitmap {
+    val random = Random(seed)
+    val pixels = IntArray(tile * tile)
+    // A tube is not covered in blotches: its face is a fine, uneven field of
+    // phosphor. Most marks are single pixels; occasional neighbours prevent
+    // it reading as digital noise while preserving a non-linear texture.
+    repeat(marks) {
+        val x = random.nextInt(tile)
+        val y = random.nextInt(tile)
+        val alpha = 26 + random.nextInt(70)
+        fun put(px: Int, py: Int, a: Int) {
+            val index = py * tile + px
+            val previous = pixels[index] ushr 24
+            pixels[index] = (maxOf(previous, a) shl 24) or 0x00FF_FFFF
+        }
+        put(x, y, alpha)
+        if (random.nextInt(7) == 0) {
+            put((x + 1) % tile, y, alpha / 2)
+        }
+    }
+    return Bitmap.createBitmap(pixels, tile, tile, Bitmap.Config.ARGB_8888)
+}
+
+private val TuiPhosphorTexture: Bitmap by lazy {
+    phosphorTexture(TUI_PHOSPHOR_TILE, marks = 17_600, seed = 0x5048_4F53)
+}
+
+/** A larger, denser tile used under tab and empty-tab canvases. */
+private val TuiFinePhosphorTexture: Bitmap by lazy {
+    phosphorTexture(TUI_FINE_PHOSPHOR_TILE, marks = 39_600, seed = 0x4649_4E45)
+}
+
+@Composable
+fun Modifier.tuiSurfaceTextureIf(fine: Boolean = false): Modifier {
+    if (!LocalTui.current) return this
+    val darkness = LocalChromeDarkness.current
+    val alpha = (TUI_PHOSPHOR_LIGHT_ALPHA +
+        (TUI_PHOSPHOR_DARK_ALPHA - TUI_PHOSPHOR_LIGHT_ALPHA) * darkness) *
+        if (fine) 0.82f else 1f
+    // Reverse-video light mode takes its fine texture from the dark ink; the
+    // dark tube lets more phosphor into it, avoiding a neutral-grey dirt layer.
+    val tint = androidx.compose.ui.graphics.lerp(
+        MaterialTheme.colorScheme.onSurface,
+        MaterialTheme.colorScheme.primary,
+        darkness,
+    )
+    return drawWithCache {
+        val paint = Paint().apply {
+            shader = ImageShader(
+                (if (fine) TuiFinePhosphorTexture else TuiPhosphorTexture).asImageBitmap(),
+                TileMode.Repeated,
+                TileMode.Repeated,
+            )
+            colorFilter = ColorFilter.tint(tint)
+            filterQuality = FilterQuality.None
+            this.alpha = alpha
+        }
+        onDrawBehind { drawIntoCanvas { it.drawRect(0f, 0f, size.width, size.height, paint) } }
+    }
+}
+
+/**
+ * Compatibility name retained at the chrome call sites. The old raster has
+ * been replaced with [tuiSurfaceTextureIf], so sheets and the navbar share
+ * the canvas substrate rather than scanlines.
  */
 @Composable
-fun Modifier.tuiCrtIf(): Modifier =
-    if (LocalTui.current) {
-        crt(LocalChromeDarkness.current, MaterialTheme.colorScheme.primary, overContent = false, vignette = false)
-    } else {
-        this
-    }
+fun Modifier.tuiCrtIf(): Modifier = tuiSurfaceTextureIf()
 
 /**
  * A tab PREVIEW as a picture on a tube: raster and grille drawn OVER the page
@@ -264,11 +331,11 @@ fun Modifier.tuiCrtIf(): Modifier =
 @Composable
 fun Modifier.tuiScreenIf(amount: () -> Float = { 1f }): Modifier {
     if (!LocalTui.current) return this
-    val ink = MaterialTheme.colorScheme.primary
+    val ink = Ink
     // No raster over the picture: scanlines across a page preview read as
     // a damaged thumbnail, not a tube. The bezel alone says "screen".
     return this
-        // A hairline in the ACCENT round the picture — the bezel's
+        // A hairline in terminal ink round the picture — the bezel's
         // edge, which is what tells a card from the page it shows. Scaled by
         // [amount] (read in draw) so it arrives as the card does.
         .drawWithContent {
@@ -294,10 +361,13 @@ fun Modifier.tuiScreenIf(amount: () -> Float = { 1f }): Modifier {
 @Composable
 fun Modifier.tuiSoftOutlineIf(color: Color, width: androidx.compose.ui.unit.Dp = 1.dp): Modifier {
     if (!LocalTui.current) return this
+    // The light end is paper, not a white CRT. A printed rule is sharp; soft
+    // focus fades in only as the tube takes over during a theme transition.
+    val blur = SOFT_RULE_BLUR * LocalChromeDarkness.current
     return drawWithContent {
         drawContent()
         val w = width.toPx()
-        drawSoftRule(color, 1f, w / 2f, w / 2f, size.width - w, size.height - w, w, SOFT_RULE_BLUR.toPx())
+        drawSoftRule(color, 1f, w / 2f, w / 2f, size.width - w, size.height - w, w, blur.toPx())
     }
 }
 
@@ -397,13 +467,12 @@ private const val CARD_GLOW_LIGHT = 0.08f
  * the parts that move (flicker, jitter, sync) left out — chrome that crawls
  * is a fault, not a period detail:
  *
- * - **Scanlines** with a soft, grained beam profile — see [ScanTiles].
- *   Plainly there on paper too: a paper-white monitor had them, dark gaps
- *   across a lit ground, which is where they read most clearly.
+ * - **Scanlines** with a soft, grained beam profile — see [ScanTiles]. They
+ *   belong to the dark CRT end; the light end retains only a near-invisible
+ *   paper texture.
  * - **Aperture grille**: the phosphor stripes — a red, green and blue column
- *   repeated across the screen, multiplied in at a few percent. On a light
- *   ground this is the colour fringe a white tube had under a magnifier; on a
- *   dark one it only shows where something is lit, which is also true.
+ *   repeated across the dark tube. Paper output has no phosphor grille, so
+ *   the light end deliberately omits it.
  * - **Raster lift** (dark end, under content only): the lit rows tinted with
  *   the phosphor at a couple of percent — an unlit tube is glass with the
  *   phosphor faintly in it, not black.
@@ -545,20 +614,21 @@ private const val SCAN_TILE = 128
 private const val SCANLINE_PITCH_DP = 3f
 private const val SCANLINE_SHARPNESS = 1.6f
 private const val SCANLINE_GRAIN = 0.35f
-/** Light: a lit ground shows its gaps plainly, so far less than the dark end needs. */
-private const val SCAN_ALPHA_LIGHT = 0.02f
+/** Paper output has no raster; its material comes from the restrained palette and ink bleed. */
+private const val SCAN_ALPHA_LIGHT = 0f
 private const val SCAN_ALPHA_DARK = 0.24f
 
 /** A stripe per ~0.4dp: three to a dp-and-a-bit, close to a real grille's pitch at arm's length. */
 private const val GRILLE_STRIPE_DP = 0.4f
-private const val MASK_ALPHA_LIGHT = 0.015f
+// RGB phosphor stripes are a colour-CRT property, not a printout property.
+private const val MASK_ALPHA_LIGHT = 0f
 private const val MASK_ALPHA_DARK = 0.05f
 
 private const val RASTER_LIFT_DARK = 0.045f
 // The empty screen's and the switcher's edge fall-off. Halved from 0.14 /
 // 0.5: at full strength it read as a shadow round a blank screen rather than
 // as a tube's edge.
-private const val VIGNETTE_LIGHT = 0.07f
+private const val VIGNETTE_LIGHT = 0f
 private const val VIGNETTE_DARK = 0.25f
 private const val VIGNETTE_EDGE = 0.2f
 private const val FLOOR = 0.004f

@@ -73,7 +73,9 @@ import androidx.compose.ui.unit.dp
 
 /**
  * The 98 theme's icons: Open Iconic (useiconic.com/open, Iconic/Waybury, MIT
- * + SIL OFL), vendored as the SVG path data it ships.
+ * + SIL OFL) for the long-tail vocabulary, plus Pixelarticons
+ * (github.com/halfmage/pixelarticons, MIT) for the controls touched most
+ * often. Both are vendored as the SVG path data they ship.
  *
  * **Why this set and not Material's.** The theme's type is an outline
  * grotesque now (see [Ninety8Family]) and its icons came back from
@@ -90,7 +92,12 @@ import androidx.compose.ui.unit.dp
  * set, so it is smooth at 400dpi — the pixels are gone and the proportions
  * they forced are what is kept, which is the same trade the face makes.
  *
- * **Every glyph is placed, not just parsed** — see [Glyph]. The set is drawn
+ * The high-frequency controls move to Pixelarticons' strict 24-unit grid:
+ * its deliberate square pixels make back, refresh, close and search read as
+ * part of the bevelled chrome, rather than as smooth Material glyphs dropped
+ * into it.
+ *
+ * **Every Open Iconic glyph is placed, not just parsed** — see [Glyph]. The set is drawn
  * to the EDGES of its 8x8 box and several glyphs sit against one of them, so
  * dropped into a 24dp slot as they ship they come out both oversized beside
  * Material's own icons and, for the ones that are not symmetrical, visibly
@@ -113,14 +120,10 @@ import androidx.compose.ui.unit.dp
  * is 7 by 8 with a ribbon in it, which says the same thing at the weight of
  * everything beside it, and it is the more period object anyway.
  *
- * Private mode is a MOON, and it got there by elimination: the set has an
- * `eye` and no crossed-out one, and `ban` — a circle with a bar through it,
- * which is what stood there first — is the international sign for FORBIDDEN.
- * A private tab is not a blocked one, and a badge saying so on every card in
- * the switcher reads as an error state. (`ban` earns its place elsewhere: it
- * is the ad blocker, where forbidden is exactly what is meant.) The moon is
- * the same metaphor the app's own private palette runs on. It doubles as
- * page-dark, which the two can afford: they are never on screen together.
+ * Private mode is Pixelarticons' crossed-out eye. It keeps the metaphor used
+ * by the ordinary theme while staying visibly separate from the moon that
+ * represents page dark mode; the same distinction survives when both controls
+ * appear in one flow.
  *
  * Vendored as `d` strings rather than as hand-written path builders because
  * these are somebody else's drawings and the point is that they arrive
@@ -220,6 +223,59 @@ private fun oi(name: String): ImageVector {
         .build()
 }
 
+/**
+ * Pixelarticons' MIT-licensed 24px set, used for the controls people touch
+ * most often. Unlike the old Open Iconic glyphs these preserve a deliberate
+ * pixel grid at phone density, which better matches the 98 bevels.
+ */
+private val PIXEL_GLYPHS = mapOf(
+    "add" to "M13 11h7v2h-7v7h-2v-7H4v-2h7V4h2v7Z",
+    "back" to "M20 11v2H4v-2zM8 13v2H6v-2zm2 2v2H8v-2zm2 2v2h-2v-2zm-4-6V9H6v2zM10 15V7H8v8zm2 2V5h-2v12z",
+    "forward" to "M4 11v2h16v-2zm12 2v2h2v-2zm-2 2v2h2v-2zm-2 2v2h2v-2zm4-6V9h2v2zM14 15V7h2v8zm-2 2V5h2v12z",
+    "corner-up-left" to "M18 8H4v2h14zm2 2h-2v10h2zM8 14h2v-2H8zm-2-2h2v-2H6zm0-4h2V6H6zM8 12h2V4H8z",
+    "up" to "M13 8h-2v2h2V8Zm-2 2H9v2h2v-2Zm4 0h-2v2h2v-2Zm-6 2H7v2h2v-2Zm8 0h-2v2h2v-2ZM7 14H5v2h2v-2Zm12 0h-2v2h2v-2Z",
+    "down" to "M13 16h-2v-2h2v2Zm-2-2H9v-2h2v2Zm4 0h-2v-2h2v2Zm-6-2H7v-2h2v2Zm8 0h-2v-2h2v2ZM7 10H5V8h2v2Zm12 0h-2V8h2v2Z",
+    "close" to "M7 19H5V17H7V19ZM19 19H17V17H19V19ZM9 15V17H7V15H9ZM17 17H15V15H17V17ZM11 15H9V13H11V15ZM15 15H13V13H15V15ZM13 13H11V11H13V11ZM11 11H9V9H11V11ZM15 11H13V9H15V11ZM9 9H7V7H9V9ZM17 9H15V7H17V9ZM7 7H5V5H7V7ZM19 7H17V5H19V7Z",
+    "search" to "M22 22h-2v-2h2v2Zm-2-2h-2v-2h2v2Zm-6-2H6v-2h8v2Zm4 0h-2v-2h2v2ZM6 16H4v-2h2v2Zm10 0h-2v-2h2v2ZM4 14H2V6h2v8Zm14 0h-2V6h2v8ZM6 6H4V4h2v2Zm10 0h-2V4h2v2Zm-2-2H6V2h8v2Z",
+    "refresh" to "M16 4h2v6h-2zm-2-2h2v2h-2zm0 2h2v8h-2zM4 8H2v5h2zM4 6h16v2H4zm4 14H6v-6h2zm2 2H8v-2h2zm0-2H8v-8h2zm10-4h2v-5h-2zM20 18H4v-2h16z",
+    "bookmark" to "M6 2h12v2H6zM4 4h2v18H4zm14 0h2v18h-2zm-2 16h2v2h-2zm-2-2h2v2h-2zm-8 2h2v2H6zm2-2h2v2H8zm2-2h4v2h-4z",
+    // Enabled-state variants retain the exact outline silhouette and only
+    // add ink inside it; toggling state must not swap the depicted object.
+    "bookmark-filled" to "M6 2h12v2h2v18h-4v-2h-2v-2h-4v2H8v2H4V4h2z",
+    "download" to "M21 15v4h-2v-4zm-2 4v2H5v-2zM5 15v4H3v-4zm8-12v14h-2V3zM7 11v2h10v-2zm2 2v2h2v-2zm4 0v2h2v-2zM15 11v2h2v-2z",
+    "trash" to "M18 22H6V20H18V22ZM9 6H15V4H17V6H22V8H20V20H18V8H6V20H4V8H2V6H7V4H9V6ZM15 4H9V2H15V4Z",
+    "monitor" to "M4 2h16v2H4zm0 14h16v2H4zM2 4h2v12H2zm18 0h2v12h-2zm-9 14h2v2h-2zm-3 2h8v2H8z",
+    "monitor-filled" to "M4 2h16v2H4zm0 14h16v2H4zM2 4h2v12H2zm18 0h2v12h-2zm-9 14h2v2h-2zm-3 2h8v2H8zM4 4h16v12H4z",
+    "file" to "M6 4H4v16h2zm10-2H6v2h10zm4 4h-2v14h2zm-2 14H6v2h12zM16 4h2v2h-2zm-4 0h2v6h-2zM12 8h6v2h-6z",
+    "folder" to "M4 4h6v2H4zm0 14h16v2H4zM20 8h2v10h-2zM2 6h2v12H2zm8 0h10v2H10z",
+    "clock" to "M6 2h12v2H6zM2 6h2v12H2zm18 0h2v12h-2zm-2-2h2v2h-2zM4 4h2v2H4zm2 18h12v-2H6zm12-2h2v-2h-2zM4 20h2v-2H4zm7-14h2v7h-2zm2 7h2v2h-2zm2 2h2v2h-2z",
+    "key" to "M11 18H3V16H11V18ZM23 15H21V18H17V16H19V13H21V11H11V8H13V9H23V15ZM3 16H1V8H3V16ZM17 16H15V15H13V16H11V13H17V16ZM9 14H5V10H9V14ZM11 8H3V6H11V8Z",
+    "lock" to "M5 8h14v2H5zm0 12h14v2H5zM3 10h2v10H3zm16 0h2v10h-2zM7 4h2v4H7zm2-2h6v2H9zm6 2h2v4h-2z",
+    "moon" to "M18 22H8v-2h10v2ZM8 20H6v-2h2v2Zm12 0h-2v-2h2v2ZM6 18H4v-2h2v2Zm16 0h-2v-4h-2v-2h2v-2h2v8ZM4 16H2V6h2v10Zm14 0h-6v-2h6v2Zm-6-2h-2v-2h2v2Zm-2-2H8V6h2v6ZM6 6H4V4h2v2Zm8-2h-2v2h-2V4H6V2h8v2Z",
+    "moon-filled" to "M6 2h8v2h-2v2h-2v6h2v2h6v-2h2v-2h2v8h-2v2h-2v2H8v-2H6v-2H4v-2H2V6h2V4h2V2Z",
+    "book-open" to "M2 3h9v2H2zM0 19h11v2H0zM13 3h9v2h-9zm0 16h11v2H13zM11 5h2v18h-2zM0 5h2v14H0zm22 0h2v14h-2zm-7 2h5v2h-5zm0 4h5v2h-5zm0 4h2v2h-2z",
+    "globe" to "M6 2h12v2H6zm0 18h12v2H6zM4 4h2v2H4zm5 0h2v2H9zm0 14h2v2H9zm4 0h2v2h-2zM7 6h2v12H7zm8 0h2v12h-2zm-2-2h2v2h-2zm7 0h-2v2h2zM2 6h2v12H2zm20 0h-2v12h2zM4 18h2v2H4zm16 0h-2v2h2zM3 11h18v2H3z",
+    "share" to "M20 22H4V20H20V22ZM4 20H2V14H4V20ZM22 20H20V14H22V20ZM13 4H15V6H17V8H13V18H11V8H7V6H9V4H11V2H13V4ZM9 14H4V12H9V14ZM20 14H15V12H20V14Z",
+    "eye" to "M16 20H8v-2h8v2Zm-8-2H4v-2h4v2Zm12 0h-4v-2h4v2ZM4 16H2v-2h2v2Zm10-6h-2v2h2v-2h2v4h-2v2h-4v-2H8v-4h2V8h4v2Zm8 6h-2v-2h2v2ZM2 14H0v-4h2v4Zm22 0h-2v-4h2v4ZM4 10H2V8h2v2Zm18 0h-2V8h2v2ZM8 8H4V6h4v2Zm12 0h-4V6h4v2Zm-4-2H8V4h8v2Z",
+    "eye-off" to "M0 10h2v4H0zm24 0h-2v4h2zm-8 0h-2v2h2zm-6 0H8v4h2zM2 8h2v2H2zm0 8h2v-2H2zm20-8h-2v2h2zm0 8h-2v-2h2zM4 6h4v2H4zm0 12h4v-2H4zM20 6h-4v2h4zM10 4h6v2h-6zM8 20h8v-2H8zm4-12h2v2h-2zm-2 6h4v2h-4zM8 8h2v2H8zm2 2h2v4h-2zm2 2h2v2h-2zM6 6h2v2H6zM4 4h2v2H4zM2 2h2v2H2zm12 12h2v2h-2zm2 2h2v2h-2zm2 2h2v2h-2zm2 2h2v2h-2z",
+    "image" to "M4 2h16v2H4zm0 18h16v2H4zM2 4h2v16H2zm18 0h2v16h-2zm-4 8h2v2h-2zm-2 2h2v2h-2zm4 0h2v2h-2zm-8 0h2v2h-2zm2 2h2v2h-2zm2 2h2v2h-2zM20 16h2v2h-2zM8 16h2v2H8zm-2 2h2v2H6zM8 6h2v2H8zM6 8h2v2H6zm2 2h2v2H8zm2-2h2v2h-2z",
+    "copy" to "M8 6h12v2H8zM4 2h12v2H4zm2 6h2v12H6zM2 4h2v12H2zm6 16h12v2H8zM20 8h2v12h-2zm-4-4h2v2h-2zM4 16h2v2H4z",
+    "shield" to "M4 2h16v2H4zM2 4h2v10H2zm18 0h2v10h-2zM4 14h2v2H4zm2 2h2v2H6zm4 4h4v2h-4zm10-6h-2v2h2zm-2 2h-2v2h2zm-2 2h-2v2h2zm-6 0H8v2h2z",
+    "menu" to "M20 18H4v-2h16v2Zm0-5H4v-2h16v2Zm0-5H4V6h16v2Z",
+    "sliders" to "M8 14H7v6H5v-6H2v-2h6v2Zm5 6h-2V10h2v10Zm9-2h-3v2h-2v-2h-1v-2h6v2Zm-3-4h-2V4h2v10ZM7 10H5V4h2v6Zm6-4h2v2H9V6h2V4h2v2Z",
+)
+
+private fun pixel(name: String): ImageVector = ImageVector.Builder(
+    name = "Pixelarticons.$name",
+    defaultWidth = ICON_SIZE,
+    defaultHeight = ICON_SIZE,
+    viewportWidth = 24f,
+    viewportHeight = 24f,
+).addPath(
+    pathData = PathParser().parsePathString(PIXEL_GLYPHS.getValue(name)).toNodes(),
+    fill = SolidColor(Color.Black),
+).build()
+
 /** The slot a glyph is centred in, in the units of its own 8-unit grid. */
 private const val BOX = 10f
 
@@ -232,69 +288,69 @@ internal val Ninety8IconOverrides: Map<ImageVector, ImageVector> by lazy {
         // above already spends it — two identical glyphs one row apart in
         // the same menu is worse than the near miss, so the reader keeps
         // the page of text, which is what it makes of a page anyway.
-        Icons.AutoMirrored.Filled.MenuBook to oi("document"),
-        Icons.AutoMirrored.Outlined.MenuBook to oi("document"),
-        Icons.AutoMirrored.Filled.InsertDriveFile to oi("file"),
+        Icons.AutoMirrored.Filled.MenuBook to pixel("book-open"),
+        Icons.AutoMirrored.Outlined.MenuBook to pixel("book-open"),
+        Icons.AutoMirrored.Filled.InsertDriveFile to pixel("file"),
         Icons.AutoMirrored.Filled.OpenInNew to oi("external-link"),
-        Icons.AutoMirrored.Filled.KeyboardArrowLeft to oi("chevron-left"),
-        Icons.AutoMirrored.Filled.KeyboardArrowRight to oi("chevron-right"),
-        Icons.Filled.KeyboardArrowUp to oi("chevron-top"),
-        Icons.Filled.KeyboardArrowDown to oi("chevron-bottom"),
-        Icons.Filled.Add to oi("plus"),
+        Icons.AutoMirrored.Filled.KeyboardArrowLeft to pixel("back"),
+        Icons.AutoMirrored.Filled.KeyboardArrowRight to pixel("forward"),
+        Icons.Filled.KeyboardArrowUp to pixel("up"),
+        Icons.Filled.KeyboardArrowDown to pixel("down"),
+        Icons.Filled.Add to pixel("add"),
         Icons.Filled.Apps to oi("grid-three-up"),
         Icons.Filled.Block to oi("ban"),
-        Icons.Filled.Bookmark to oi("book"),
-        Icons.Outlined.BookmarkBorder to oi("book"),
+        Icons.Filled.Bookmark to pixel("bookmark-filled"),
+        Icons.Outlined.BookmarkBorder to pixel("bookmark"),
         Icons.Filled.Check to oi("check"),
-        Icons.Filled.Close to oi("x"),
-        Icons.Outlined.Close to oi("x"),
+        Icons.Filled.Close to pixel("close"),
+        Icons.Outlined.Close to pixel("close"),
         Icons.Filled.Cloud to oi("cloud"),
-        Icons.Filled.ContentCopy to oi("clipboard"),
-        Icons.Outlined.ContentCopy to oi("clipboard"),
+        Icons.Filled.ContentCopy to pixel("copy"),
+        Icons.Outlined.ContentCopy to pixel("copy"),
         Icons.Filled.Cookie to oi("comment-square"),
-        Icons.Filled.DarkMode to oi("moon"),
-        Icons.Outlined.DarkMode to oi("moon"),
-        Icons.Filled.Delete to oi("trash"),
-        Icons.Filled.DeleteOutline to oi("trash"),
+        Icons.Filled.DarkMode to pixel("moon-filled"),
+        Icons.Outlined.DarkMode to pixel("moon"),
+        Icons.Filled.Delete to pixel("trash"),
+        Icons.Filled.DeleteOutline to pixel("trash"),
         Icons.Filled.DeleteSweep to oi("delete"),
-        Icons.Filled.DesktopWindows to oi("monitor"),
-        Icons.Outlined.DesktopWindows to oi("monitor"),
-        Icons.Filled.Download to oi("data-transfer-download"),
-        Icons.Filled.DragHandle to oi("menu"),
-        Icons.Filled.FileOpen to oi("file"),
-        Icons.Filled.FolderOpen to oi("folder"),
-        Icons.Filled.History to oi("clock"),
-        Icons.Outlined.Image to oi("image"),
-        Icons.Filled.Key to oi("key"),
-        Icons.Filled.Password to oi("key"),
+        Icons.Filled.DesktopWindows to pixel("monitor-filled"),
+        Icons.Outlined.DesktopWindows to pixel("monitor"),
+        Icons.Filled.Download to pixel("download"),
+        Icons.Filled.DragHandle to pixel("menu"),
+        Icons.Filled.FileOpen to pixel("file"),
+        Icons.Filled.FolderOpen to pixel("folder"),
+        Icons.Filled.History to pixel("clock"),
+        Icons.Outlined.Image to pixel("image"),
+        Icons.Filled.Key to pixel("key"),
+        Icons.Filled.Password to pixel("key"),
         Icons.Filled.Keyboard to oi("laptop"),
         Icons.Filled.Layers to oi("layers"),
         Icons.Filled.Link to oi("link-intact"),
-        Icons.Filled.Lock to oi("lock-locked"),
+        Icons.Filled.Lock to pixel("lock"),
         Icons.Outlined.MoreVert to oi("ellipses"),
-        Icons.Filled.NorthWest to oi("action-undo"),
+        Icons.Filled.NorthWest to pixel("corner-up-left"),
         Icons.Filled.NorthEast to oi("action-redo"),
         Icons.Filled.OpenInBrowser to oi("external-link"),
         Icons.Outlined.OpenInBrowser to oi("external-link"),
         Icons.Outlined.Palette to oi("brush"),
         Icons.Filled.PhoneAndroid to oi("phone"),
-        Icons.Filled.Preview to oi("eye"),
-        Icons.Filled.PrivacyTip to oi("shield"),
-        Icons.Filled.Public to oi("globe"),
-        Icons.Filled.Refresh to oi("reload"),
-        Icons.Outlined.Refresh to oi("reload"),
-        Icons.Filled.Search to oi("magnifying-glass"),
-        Icons.Outlined.Search to oi("magnifying-glass"),
-        Icons.Filled.Settings to oi("cog"),
-        Icons.Outlined.Share to oi("share-boxed"),
+        Icons.Filled.Preview to pixel("eye"),
+        Icons.Filled.PrivacyTip to pixel("shield"),
+        Icons.Filled.Public to pixel("globe"),
+        Icons.Filled.Refresh to pixel("refresh"),
+        Icons.Outlined.Refresh to pixel("refresh"),
+        Icons.Filled.Search to pixel("search"),
+        Icons.Outlined.Search to pixel("search"),
+        Icons.Filled.Settings to pixel("sliders"),
+        Icons.Outlined.Share to pixel("share"),
         Icons.Filled.Storage to oi("hard-drive"),
         Icons.Filled.SwapHoriz to oi("transfer"),
         Icons.Filled.SwipeLeft to oi("arrow-thick-left"),
         Icons.Filled.Tab to oi("browser"),
         Icons.Outlined.Terminal to oi("terminal"),
         Icons.Filled.TouchApp to oi("target"),
-        Icons.Filled.Tune to oi("dial"),
-        Icons.Filled.Visibility to oi("eye"),
-        Icons.Filled.VisibilityOff to oi("moon"),
+        Icons.Filled.Tune to pixel("sliders"),
+        Icons.Filled.Visibility to pixel("eye"),
+        Icons.Filled.VisibilityOff to pixel("eye-off"),
     )
 }

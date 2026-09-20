@@ -45,23 +45,25 @@ private class Ramp(private val seed: Color, isDark: Boolean) {
     // `tuiBloomIf`), and a tinted ground under a tinted glow reads as the
     // whole screen being one muddy colour instead of dark glass with colour
     // coming off the type.
-    val base = if (isDark) at(0.035f, 0.12f) else at(0.985f, 0.55f)
-    val mantle = if (isDark) at(0.022f, 0.12f) else at(0.965f, 0.40f)
-    val crust = if (isDark) at(0.012f, 0.12f) else at(0.945f, 0.32f)
+    // Paper needs visible material steps. Near-white, high-chroma grounds
+    // read as a conventional themed UI; lower-chroma stock reads as a sheet.
+    val base = if (isDark) at(0.035f, 0.12f) else at(0.965f, 0.18f)
+    val mantle = if (isDark) at(0.022f, 0.12f) else at(0.935f, 0.14f)
+    val crust = if (isDark) at(0.012f, 0.12f) else at(0.900f, 0.10f)
 
     // Inks, strongest first. Dark: NEAR-WHITE — the white-hot core of a lit
     // stroke, which is what makes a coloured glow around it read as
     // saturated. Tinting the ink (it was L 87% at 60% saturation) spent the
     // hue on the stroke and left the halo nothing to be more colourful than.
-    val text = if (isDark) at(0.95f, 0.18f) else at(0.12f, 0.20f)
-    val subtext1 = if (isDark) at(0.88f, 0.12f) else at(0.22f, 0.14f)
-    val subtext0 = if (isDark) at(0.74f, 0.08f) else at(0.33f, 0.10f)
-    val overlay2 = if (isDark) at(0.60f, 0.06f) else at(0.45f, 0.08f)
-    val overlay0 = if (isDark) at(0.34f, 0.06f) else at(0.69f, 0.08f)
+    val text = if (isDark) at(0.95f, 0.18f) else at(0.14f, 0.10f)
+    val subtext1 = if (isDark) at(0.88f, 0.12f) else at(0.25f, 0.08f)
+    val subtext0 = if (isDark) at(0.74f, 0.08f) else at(0.37f, 0.06f)
+    val overlay2 = if (isDark) at(0.60f, 0.06f) else at(0.49f, 0.05f)
+    val overlay0 = if (isDark) at(0.34f, 0.06f) else at(0.63f, 0.04f)
 
     // Raised grounds; `surface1` is also every hairline.
-    val surface0 = if (isDark) at(0.07f, 0.10f) else at(0.925f, 0.24f)
-    val surface1 = if (isDark) at(0.11f, 0.08f) else at(0.885f, 0.20f)
+    val surface0 = if (isDark) at(0.07f, 0.10f) else at(0.870f, 0.10f)
+    val surface1 = if (isDark) at(0.11f, 0.08f) else at(0.815f, 0.08f)
 
     val red = if (isDark) Color(0xFFF87171) else Color(0xFFB3261E)
 }

@@ -179,6 +179,12 @@ private fun hueShifted(seed: Color, degrees: Float): Color {
  */
 private const val DARK_ACCENT_TONE = 62
 
+/** How much of a fixed swatch's saturation the default look's GROUNDS keep,
+ * per end — set to land near Material You's wallpaper neutrals, so a swatch
+ * tints the canvas as visibly as Auto does. */
+private const val GROUND_SAT_LIGHT = 0.4f
+private const val GROUND_SAT_DARK = 0.3f
+
 /** What the accent has to be readable ON: not the darkest ground in the app
  * but the LIGHTEST of the dark ones — the sunk surfaces a field or a raised
  * container is drawn in, around #151515 in every dark scheme here (the
@@ -243,14 +249,23 @@ private fun tonalColorScheme(seed: Color, isDark: Boolean): ColorScheme {
             onTertiary = tone(tertiarySeed, 100),
             tertiaryContainer = tone(tertiarySeed, 90),
             onTertiaryContainer = tone(tertiarySeed, 10),
-            background = tone(seed, 98, 0.12f),
+            // Grounds carry the accent about as strongly as Material You's
+            // wallpaper neutrals do (HSL saturation ~0.3–0.45 at these tones),
+            // so a picked swatch colours the canvas — Settings included — the
+            // way Auto does; at 0.12 they read as plain white.
+            background = tone(seed, 98, GROUND_SAT_LIGHT),
             onBackground = tone(seed, 10, 0.12f),
-            surface = tone(seed, 98, 0.12f),
+            surface = tone(seed, 98, GROUND_SAT_LIGHT),
             onSurface = tone(seed, 10, 0.12f),
-            surfaceVariant = tone(seed, 90, 0.2f),
+            surfaceVariant = tone(seed, 90, 0.35f),
             onSurfaceVariant = tone(seed, 30, 0.2f),
-            surfaceContainerLow = tone(seed, 96, 0.12f),
-            surfaceContainerHigh = tone(seed, 92, 0.16f),
+            surfaceContainerLow = tone(seed, 96, GROUND_SAT_LIGHT),
+            surfaceContainerHigh = tone(seed, 92, GROUND_SAT_LIGHT),
+            surfaceDim = tone(seed, 87, 0.3f),
+            surfaceBright = tone(seed, 98, GROUND_SAT_LIGHT),
+            surfaceContainerLowest = tone(seed, 100, GROUND_SAT_LIGHT),
+            surfaceContainer = tone(seed, 94, GROUND_SAT_LIGHT),
+            surfaceContainerHighest = tone(seed, 90, 0.35f),
             outline = tone(seed, 50, 0.2f),
             outlineVariant = tone(seed, 80, 0.2f),
         )
@@ -291,23 +306,23 @@ private fun tonalColorScheme(seed: Color, isDark: Boolean): ColorScheme {
             // screen came back as a grey screen replacing the page. So the
             // steps are four points each, and what separates a sheet from
             // the page is the scrim under it and the hairline round it.
-            background = tone(seed, 1, 0.14f),
+            background = tone(seed, 1, GROUND_SAT_DARK),
             onBackground = tone(seed, 90, 0.14f),
-            surface = tone(seed, 1, 0.14f),
+            surface = tone(seed, 1, GROUND_SAT_DARK),
             onSurface = tone(seed, 90, 0.14f),
-            surfaceVariant = tone(seed, 12, 0.2f),
+            surfaceVariant = tone(seed, 12, GROUND_SAT_DARK),
             onSurfaceVariant = tone(seed, 80, 0.2f),
-            surfaceContainerLow = tone(seed, 5, 0.16f),
-            surfaceContainerHigh = tone(seed, 8, 0.2f),
+            surfaceContainerLow = tone(seed, 5, GROUND_SAT_DARK),
+            surfaceContainerHigh = tone(seed, 8, GROUND_SAT_DARK),
             // The rest of the family, which used to fall through to
             // Material's baseline dark scheme — a purple-grey ramp from
             // nobody's accent, several values brighter than the four above
             // and visible wherever a component reaches for one of them.
-            surfaceDim = tone(seed, 1, 0.14f),
-            surfaceBright = tone(seed, 12, 0.2f),
-            surfaceContainerLowest = tone(seed, 1, 0.14f),
-            surfaceContainer = tone(seed, 5, 0.16f),
-            surfaceContainerHighest = tone(seed, 11, 0.2f),
+            surfaceDim = tone(seed, 1, GROUND_SAT_DARK),
+            surfaceBright = tone(seed, 12, GROUND_SAT_DARK),
+            surfaceContainerLowest = tone(seed, 1, GROUND_SAT_DARK),
+            surfaceContainer = tone(seed, 5, GROUND_SAT_DARK),
+            surfaceContainerHighest = tone(seed, 11, GROUND_SAT_DARK),
             outline = tone(seed, 60, 0.2f),
             outlineVariant = tone(seed, 30, 0.2f),
         )
@@ -590,7 +605,8 @@ fun BrowserTheme(
             specialSeed(false).vivid(), false, singleVoice = true,
             accentOverride = tuiAccent(specialSeed(false), isDark = false),
         )
-        else if (nothing) NothingLightScheme.tintedWith(specialSeed(false), false, singleVoice = false)
+        else if (nothing) NothingLightScheme.nothingElementsTinted(specialSeed(false))
+            .tintedWith(specialSeed(false), false, singleVoice = false)
         // Aero is tinted like the other two, and for a reason the other two
         // do not have: Windows 7 shipped a colour picker for its glass, so
         // the swatch is not merely allowed here, it IS the colorization
@@ -607,7 +623,8 @@ fun BrowserTheme(
             specialSeed(true).vivid(), true, singleVoice = true,
             accentOverride = tuiAccent(specialSeed(true), isDark = true),
         )
-        else if (nothing) NothingDarkScheme.tintedWith(specialSeed(true), true, singleVoice = false)
+        else if (nothing) NothingDarkScheme.nothingElementsTinted(specialSeed(true))
+            .tintedWith(specialSeed(true), true, singleVoice = false)
         else if (aero) AeroDarkScheme.aeroRehued(specialSeed(true))
             .tintedWith(specialSeed(true), true, singleVoice = false)
         else if (ninety8) Ninety8DarkScheme
@@ -624,6 +641,19 @@ fun BrowserTheme(
     }
     val tuiInks = remember(accent, wallpaperDynamic, special, context) {
         if (tui) TuiInks(specialSeed(false), specialSeed(true)) else null
+    }
+    // Nothing's quiet inks and empty-screen watermark are elements, so they
+    // take the accent's hue like the scheme's own element roles do.
+    val nothingTints = remember(accent, wallpaperDynamic, special, context) {
+        if (!nothing) null else {
+            val l = specialSeed(false)
+            val d = specialSeed(true)
+            listOf(
+                nothingTint(NothingInkMutedLight, l, 0.2f), nothingTint(NothingInkMutedDark, d, 0.2f),
+                nothingTint(NothingInkFaintLight, l, 0.2f), nothingTint(NothingInkFaintDark, d, 0.2f),
+                nothingTint(NothingEmptyGlyphLight, l, 0.2f), nothingTint(NothingEmptyGlyphDark, d, 0.2f),
+            )
+        }
     }
     // The third end. Always the dark one — being dark is half of what makes
     // the private space recognisable — so it is built once and never depends
@@ -702,7 +732,7 @@ fun BrowserTheme(
         // comes from the scheme.
         inkMuted = when {
             tuiInks != null -> lerp(tuiInks.mutedLight, tuiInks.mutedDark, chromeDarkness)
-            nothing -> lerp(NothingInkMutedLight, NothingInkMutedDark, chromeDarkness)
+            nothingTints != null -> lerp(nothingTints[0], nothingTints[1], chromeDarkness)
             ninety8 -> lerp(Ninety8InkMutedLight, Ninety8InkMutedDark, chromeDarkness)
             // Aero's `outline`/`outlineVariant` are TRANSLUCENT — they are
             // hairlines drawn on glass — and translucent secondary text over
@@ -713,13 +743,16 @@ fun BrowserTheme(
         },
         inkFaint = when {
             tuiInks != null -> lerp(tuiInks.faintLight, tuiInks.faintDark, chromeDarkness)
-            nothing -> lerp(NothingInkFaintLight, NothingInkFaintDark, chromeDarkness)
+            nothingTints != null -> lerp(nothingTints[2], nothingTints[3], chromeDarkness)
             ninety8 -> lerp(Ninety8InkFaintLight, Ninety8InkFaintDark, chromeDarkness)
             aero -> lerp(AeroInkFaintLight, AeroInkFaintDark, chromeDarkness).aeroRehued(colorScheme.primary)
             else -> colorScheme.outlineVariant
         },
         pageBg = colorScheme.background,
-        barBg = colorScheme.surfaceContainerLow,
+        // TUI is one terminal face from the page through the navbar and its
+        // status-bar fill. A lighter toolbar band made a visible seam at the
+        // system inset, especially once both sides carried the same texture.
+        barBg = if (tui) colorScheme.background else colorScheme.surfaceContainerLow,
         fieldBg = colorScheme.surfaceContainerHigh,
         hairLine = colorScheme.outlineVariant,
         // The switcher's ground and the empty screen's — one surface, see
@@ -734,6 +767,10 @@ fun BrowserTheme(
         emptyBg = when {
             ninety8 -> lerp(Ninety8DesktopLight, Ninety8DesktopDark, chromeDarkness)
             nothing -> lerp(NothingEmptyLight, NothingEmptyDark, chromeDarkness)
+            // The TUI's tab canvas runs under the transparent system status
+            // bar. Keeping both on the same terminal face removes the dark
+            // band at their join; texture supplies the material distinction.
+            tui -> colorScheme.background
             // Aero's is the SKY, and it is the same call 98 makes for its
             // desktop: a switcher card under this look is a pane of glass,
             // and a pane of glass has to be held up against something. The
@@ -746,7 +783,7 @@ fun BrowserTheme(
         },
         emptyGlyph = when {
             ninety8 -> lerp(Ninety8DesktopGlyphLight, Ninety8DesktopGlyphDark, chromeDarkness)
-            nothing -> lerp(NothingEmptyGlyphLight, NothingEmptyGlyphDark, chromeDarkness)
+            nothingTints != null -> lerp(nothingTints[4], nothingTints[5], chromeDarkness)
             aero -> aeroAccentSky(colorScheme.primary, chromeDarkness, glyph = true)
             else -> colorScheme.surfaceContainerHigh
         },

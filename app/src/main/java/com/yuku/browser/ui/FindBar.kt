@@ -56,13 +56,14 @@ import androidx.compose.ui.unit.dp
 import com.yuku.browser.core.BrowserViewModel
 import com.yuku.browser.ui.theme.FieldBg
 import com.yuku.browser.ui.theme.LocalNinety8
+import com.yuku.browser.ui.theme.LocalNothing
 import com.yuku.browser.ui.theme.aeroGlassIf
 import com.yuku.browser.ui.theme.bevel98If
-import com.yuku.browser.ui.theme.hardShadow98
 import com.yuku.browser.ui.theme.Ink
 import com.yuku.browser.ui.theme.InkFaint
 import com.yuku.browser.ui.theme.InkMuted
 import com.yuku.browser.ui.theme.InkStrong
+import com.yuku.browser.ui.theme.HairLine
 import com.yuku.browser.ui.theme.specialCorner
 
 /**
@@ -115,18 +116,12 @@ fun FindBar(
                     onBounds(it.boundsInRoot())
                 } else Modifier
             )
-            // This one really is floating — it sits over a live page rather
-            // than in a sheet — so under 98 it keeps a shadow and gets the
-            // period's own: a solid black rectangle offset down and right,
-            // no blur in it. The bar itself is a raised PANEL, the silver of
-            // a toolbar rather than the white of a field, because what
-            // floats here is the whole strip and the field is one control
-            // inside it.
+            // The 98 bar is framed but casts no shadow over the page.
             .then(
-                if (LocalNinety8.current) Modifier.hardShadow98()
+                if (LocalNinety8.current) Modifier
                 // A tube lights things; it does not cast shadows under them.
                 // A shadow under frosted glass shows through it.
-                else if (com.yuku.browser.ui.theme.LocalTui.current || aero || com.yuku.browser.ui.theme.LocalFrosted.current) Modifier
+                else if (LocalNothing.current || com.yuku.browser.ui.theme.LocalTui.current || aero || com.yuku.browser.ui.theme.LocalFrosted.current) Modifier
                 else Modifier.shadow(elevation = 6.dp, shape = specialCorner(24.dp), clip = false)
             )
             .clip(specialCorner(24.dp))
@@ -142,11 +137,13 @@ fun FindBar(
                 )
                 else FieldBg
             )
+            .then(if (LocalNothing.current) Modifier.border(1.dp, HairLine, specialCorner(24.dp)) else Modifier)
             .bevel98If()
             .tuiCrtIf()
             .tuiBloomIf()
-            // The TUI's field takes the quick tiles' outline (see MenuSheet).
-            .tuiSoftOutlineIf(AccentColor.copy(alpha = 0.4f))
+            // Terminal controls are ruled in ink; the selected phosphor is
+            // reserved for their bloom and the canvas beneath them.
+            .tuiSoftOutlineIf(InkMuted.copy(alpha = 0.65f))
             // The one surface in the app that floats over a live page with
             // nothing between, which is the best backdrop a pane of glass in
             // this theme ever gets. It keeps the ordinary drop shadow above:

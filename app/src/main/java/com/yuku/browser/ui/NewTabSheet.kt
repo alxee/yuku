@@ -103,6 +103,7 @@ import com.yuku.browser.ui.theme.FieldBg
 import com.yuku.browser.ui.theme.FROSTED_ELEMENT_ALPHA
 import com.yuku.browser.ui.theme.frostedIf
 import com.yuku.browser.ui.theme.LocalNinety8
+import com.yuku.browser.ui.theme.LocalNothing
 import com.yuku.browser.ui.theme.Glassy
 import com.yuku.browser.ui.theme.aeroGlassIf
 import com.yuku.browser.ui.theme.aeroGlareIf
@@ -112,6 +113,7 @@ import com.yuku.browser.ui.theme.bevel98If
 import com.yuku.browser.ui.theme.InkMuted
 import com.yuku.browser.ui.theme.InkStrong
 import com.yuku.browser.ui.theme.AccentColor
+import com.yuku.browser.ui.theme.HairLine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import com.yuku.browser.ui.theme.specialCorner
@@ -345,6 +347,7 @@ fun NewTabSheet(
                     // No drop shadow under the TUI either: a tube lights
                     // things, it does not cast shadows under them.
                     if (
+                        LocalNothing.current ||
                         LocalNinety8.current ||
                         // A shadow under a see-through field shows through it.
                         com.yuku.browser.ui.theme.LocalFrosted.current ||
@@ -355,6 +358,7 @@ fun NewTabSheet(
                 )
                 .clip(specialCorner(24.dp))
                 .background(if (com.yuku.browser.ui.theme.LocalAero.current) FieldBg.copy(alpha = 0.22f) else FieldBg.frostedIf(FROSTED_ELEMENT_ALPHA))
+                .then(if (LocalNothing.current) Modifier.border(1.dp, HairLine, specialCorner(24.dp)) else Modifier)
                 .bevel98If(Bevel.Sunken)
                 // The menu sheet's address bar and this are the omnibox in
                 // two states and are kept identical — see there for why the
@@ -364,8 +368,9 @@ fun NewTabSheet(
                 // The field's own fill covers the sheet's halo (drawn under
                 // content), so it glows on its own, above that fill.
                 .tuiBloomIf()
-                // The TUI's field takes the quick tiles' outline (see MenuSheet).
-                .tuiSoftOutlineIf(AccentColor.copy(alpha = 0.4f))
+                // Terminal controls are ruled in ink; the selected phosphor is
+                // reserved for their bloom and the canvas beneath them.
+                .tuiSoftOutlineIf(InkMuted.copy(alpha = 0.65f))
                 .padding(start = 10.dp, end = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
