@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="app/src/main/res/drawable-nodpi/ic_launcher_cat.png" alt="Yuku app icon" width="160">
+  <img src="assets/yuku-logo.png" alt="Yuku app icon" width="160">
 </p>
 
 # Yuku
@@ -13,7 +13,7 @@ Yuku is a minimal Android browser built on WebView with a custom Jetpack Compose
 - Vertical tab switcher with swipe gestures
 - Bookmarks, searchable history, downloads
 - Reader mode, dark mode for sites
-- Custom interface themes, including Aero, Nothing, 98, and terminal-inspired styles
+- Custom app themes
 - Configurable ad, tracker, and cookie-banner blocking
 - Password, address, and payment-card autofill protected by Android Keystore
 - Support for links opened from other apps through a Custom Tabs provider
