@@ -6,6 +6,14 @@
 
 Yuku is a minimal Android browser built on WebView with a custom Jetpack Compose interface. Layout logic is borrowed from some another long abandoned browser, with some visual and behavior improvements and QOL features added.
 
+<p align="center">
+  <img src="assets/home.jpg" alt="Yuku home page" width="18%">
+  <img src="assets/tab-switcher.jpg" alt="Yuku tab switcher" width="18%">
+  <img src="assets/browser-menu.jpg" alt="Yuku browser menu" width="18%">
+  <img src="assets/dark-theme.jpg" alt="Yuku dark theme" width="18%">
+  <img src="assets/glass-theme.jpg" alt="Yuku glass theme" width="18%">
+</p>
+
 ## Main features
 
 - Tabbed browsing with a dedicated private browsing space
