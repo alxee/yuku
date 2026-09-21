@@ -76,6 +76,12 @@ abstract class GenerateShortcutsTask : DefaultTask() {
 
 androidComponents {
     onVariants { variant ->
+        if (variant.buildType == "release") {
+            variant.outputs.forEach { output ->
+                output.outputFileName.set("yuku-browser.apk")
+            }
+        }
+
         val generate = tasks.register<GenerateShortcutsTask>(
             "generate${variant.name.replaceFirstChar { it.uppercase() }}Shortcuts"
         ) {

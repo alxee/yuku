@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Yuku</string>
+    <string name="app_name">Yuku Browser</string>
 
     <!-- Launcher long-press shortcuts. The short label is what the launcher
          shows in the menu (and on a pinned icon, where it has very little
