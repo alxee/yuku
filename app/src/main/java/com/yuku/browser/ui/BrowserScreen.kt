@@ -1212,6 +1212,10 @@ fun BrowserScreen(vm: BrowserViewModel) {
         .toPx(Size(1_000_000f, 1_000_000f), LocalDensity.current)
     // The find bar's bounds, for the page glass to frost under it (Aero).
     var aeroFindBounds by remember { mutableStateOf(Rect.Zero) }
+    // The link-preview actions are foreground glass. Their backdrop blur has
+    // to be cut out of the PAGE layer, because a Compose overlay cannot sample
+    // the WebView painted behind it.
+    var aeroPreviewActionBounds by remember { mutableStateOf(Rect.Zero) }
     // Under Aero the tab LIST is drawn over the whole screen rather than in
     // the switcher's box (see the overlay after the Scaffold): its scrim then
     // reaches the navigation bar, and the page glass can frost the page under
@@ -3092,7 +3096,14 @@ fun BrowserScreen(vm: BrowserViewModel) {
                         else if (aeroListOverlay && tabViewMode == TabViewMode.List) aeroListPane.rect()
                         else Rect.Zero
                     },
-                    findInRoot = { aeroFindBounds },
+                    // A link preview replaces Find on page. Its action tray is
+                    // a miniature sheet canvas, so feed it through the same
+                    // blurred/bent glass region rather than the foreground-
+                    // droplet shortcut (which intentionally has no bend).
+                    findInRoot = {
+                        if (!aeroPreviewActionBounds.isEmpty) aeroPreviewActionBounds
+                        else aeroFindBounds
+                    },
                     paneFadeInRoot = {
                         if (sheetHeightAnim.value <= 0f && aeroListOverlay && tabViewMode == TabViewMode.List) aeroListPane.fade()
                         else Offset.Zero
@@ -4465,6 +4476,7 @@ fun BrowserScreen(vm: BrowserViewModel) {
             )
         },
         onDismiss = vm::closeLinkPreview,
+        onActionBounds = { aeroPreviewActionBounds = it },
     )
 
     if (findForPage != null) {

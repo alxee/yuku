@@ -87,6 +87,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.TransformOrigin
@@ -128,8 +129,18 @@ import com.yuku.browser.ui.theme.HairLine
 import com.yuku.browser.ui.theme.Ink
 import com.yuku.browser.ui.theme.InkMuted
 import com.yuku.browser.ui.theme.InkStrong
+import com.yuku.browser.ui.theme.Glassy
+import com.yuku.browser.ui.theme.LocalAero
+import com.yuku.browser.ui.theme.LocalNinety8
+import com.yuku.browser.ui.theme.LocalTui
 import com.yuku.browser.ui.theme.PageBg
 import com.yuku.browser.ui.theme.Secure
+import com.yuku.browser.ui.theme.aeroGlassIf
+import com.yuku.browser.ui.theme.aeroPageGlass
+import com.yuku.browser.ui.theme.bevel98If
+import com.yuku.browser.ui.theme.hardShadow98
+import com.yuku.browser.ui.theme.tuiBloomIf
+import com.yuku.browser.ui.theme.tuiCrtIf
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -326,6 +337,7 @@ fun CustomTabScreen(
     val findState by vm.findState.collectAsStateWithLifecycle()
     val contextTarget by vm.contextTarget.collectAsStateWithLifecycle()
     val linkPreview by vm.linkPreview.collectAsStateWithLifecycle()
+    var aeroPreviewActionBounds by remember { mutableStateOf(Rect.Zero) }
     val desktopMode by vm.desktopMode.collectAsStateWithLifecycle()
     val readerAvailable by vm.readerAvailable.collectAsStateWithLifecycle()
     val readerActive by vm.readerActive.collectAsStateWithLifecycle()
@@ -626,6 +638,13 @@ fun CustomTabScreen(
             Box(
                 Modifier
                     .fillMaxSize()
+                    // As in the full browser, the WebView's own layer owns the
+                    // pixels that can actually be blurred under foreground
+                    // glass. The preview reports the tray's root bounds.
+                    .aeroPageGlass(
+                        paneInRoot = { Rect.Zero },
+                        findInRoot = { aeroPreviewActionBounds },
+                    )
                     // The status bar at the top and the keyboard (or the
                     // system navigation bar) at the bottom are the page's
                     // real edges. The header is not one of them — it is over
@@ -757,6 +776,7 @@ fun CustomTabScreen(
             // way of leaving it: the card stays.
             onCopyLink = ::copyLink,
             onDismiss = vm::closeLinkPreview,
+            onActionBounds = { aeroPreviewActionBounds = it },
         )
 
         val findForPage = findState?.takeIf {
@@ -946,7 +966,12 @@ private fun CustomTabHeader(
                                 ),
                             ) {
                                 Surface(
-                                    modifier = Modifier.width(MENU_WIDTH),
+                                    modifier = Modifier
+                                        .width(MENU_WIDTH)
+                                        .then(
+                                            if (LocalNinety8.current) Modifier.hardShadow98()
+                                            else Modifier
+                                        ),
                                     shape = specialCorner(MENU_CORNER),
                                     color = BarBg,
                                     // A hairline, and NO elevation shadow.
@@ -965,9 +990,18 @@ private fun CustomTabHeader(
                                     // border is drawn as content, so it fades
                                     // and scales with the panel and there is
                                     // nothing left to pop.
-                                    border = BorderStroke(1.dp, HairLine),
+                                    border = if (
+                                        LocalAero.current || LocalNinety8.current || LocalTui.current
+                                    ) null else BorderStroke(1.dp, HairLine),
                                 ) {
-                                    Column(Modifier.padding(vertical = MENU_DIVIDER_GAP)) {
+                                    Column(
+                                        Modifier
+                                            .bevel98If()
+                                            .aeroGlassIf(MENU_CORNER, Glassy.Pane)
+                                            .tuiCrtIf()
+                                            .tuiBloomIf()
+                                            .padding(vertical = MENU_DIVIDER_GAP)
+                                    ) {
                         // The three actions that act on the page in place —
                         // no navigation, nothing to read — as icons across the
                         // top, the same shape the menu sheet's address row

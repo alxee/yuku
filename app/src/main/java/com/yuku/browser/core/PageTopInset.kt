@@ -642,6 +642,7 @@ object PageTopInset {
               : 0;
             return {
               el: el, levers: levers,
+              position: cs.position,
               // The class the site's own values were read under; see the
               // re-base in measure().
               cls: el.getAttribute('class') || '',
@@ -787,6 +788,8 @@ object PageTopInset {
               if (rec.el.style.getPropertyValue(lv.p) !== want){
                 try { rec.el.style.setProperty(lv.p, want, 'important'); } catch (e) {}
               }
+              lv.written = rec.el.style.getPropertyValue(lv.p);
+              lv.writtenPriority = rec.el.style.getPropertyPriority(lv.p);
             }
             writeFill(rec);
           }
@@ -796,6 +799,12 @@ object PageTopInset {
             for (var i = 0; i < rec.levers.length; i++){
               var lv = rec.levers[i];
               try {
+                // A site may replace our offset while changing header modes.
+                // Only undo a value we still own; its replacement is the new
+                // baseline, not something to overwrite with the old layout.
+                if (lv.written == null ||
+                    rec.el.style.getPropertyValue(lv.p) !== lv.written ||
+                    rec.el.style.getPropertyPriority(lv.p) !== lv.writtenPriority) continue;
                 if (lv.inline) rec.el.style.setProperty(lv.p, lv.inline, lv.priority);
                 else rec.el.style.removeProperty(lv.p);
               } catch (e) {}
@@ -960,6 +969,29 @@ object PageTopInset {
             } catch (e) { return false; }
           }
 
+          // A small control absolutely positioned against the document's
+          // initial containing block. Body padding moves the header's normal
+          // flow (Google Search's logo and sign-in button), but CSS absolute
+          // positioning starts at the body's padding edge, so a sibling such
+          // as Google's menu button stays behind the status bar. Treat only
+          // an interactive, compact control at the document's very top this
+          // way: ordinary absolute artwork and controls positioned inside a
+          // component keep the site's own placement.
+          function topAbsoluteControl(el, cs, r, vw, vh){
+            if (!steady() || cs.position !== 'absolute' || !viewportAnchored(el)) return false;
+            if ((window.scrollY || 0) > TOP_SLACK_PX) return false;
+            var top = parseFloat(cs.top);
+            if (cs.top === 'auto' || !isFinite(top) || top < -TOP_SLACK_PX ||
+                top > bar + TOP_SLACK_PX) return false;
+            if (r.width <= 0 || r.height <= 0 || r.width > vw * 0.4 ||
+                r.height > vh * MAX_HEIGHT_FRACTION) return false;
+            try {
+              if (el.matches('a,button,[role="button"],[tabindex]') ||
+                  el.hasAttribute('aria-label') || el.hasAttribute('onclick')) return true;
+              return !!el.querySelector('a,button,[role="button"],[tabindex],[aria-label],[onclick]');
+            } catch (e) { return false; }
+          }
+
           function candidates(vw, vh){
             var out = [];
             var b = document.body;
@@ -985,7 +1017,11 @@ object PageTopInset {
               var sticky = cs.position === 'sticky' || cs.position === '-webkit-sticky';
               var shell = !fixed && !sticky && shellsAllowed && cs.position === 'absolute' &&
                 viewportAnchored(el);
-              if (!fixed && !sticky && !shell) continue;
+              var r;
+              try { r = el.getBoundingClientRect(); } catch (e) { continue; }
+              var absoluteControl = !fixed && !sticky && !shell &&
+                topAbsoluteControl(el, cs, r, vw, vh);
+              if (!fixed && !sticky && !shell && !absoluteControl) continue;
               // A sticky element with no `top` sticks to nothing at the top
               // edge; moving its margin would move it in flow, where the
               // body's padding has already dealt with it.
@@ -994,8 +1030,6 @@ object PageTopInset {
               // door (ReaderMode.setInsets); moving it here would move it
               // twice.
               if (el.id === '__yuku_reader__') continue;
-              var r;
-              try { r = el.getBoundingClientRect(); } catch (e) { continue; }
               var topVal = parseFloat(cs.top);
               var anchored = cs.top !== 'auto' && isFinite(topVal);
               // Measured by what it puts ON SCREEN, not by how tall its box
@@ -1694,7 +1728,7 @@ object PageTopInset {
                 try {
                   var p2 = window.getComputedStyle(el2).position;
                   live = p2 === 'fixed' || p2 === 'sticky' || p2 === '-webkit-sticky' ||
-                    (shifted[i].shell && p2 === 'absolute');
+                    ((shifted[i].shell || shifted[i].absoluteControl) && p2 === 'absolute');
                 } catch (e) {}
               }
               if (!live){ restore(shifted[i]); shifted.splice(i, 1); continue; }
@@ -1714,6 +1748,19 @@ object PageTopInset {
               // with the old base written over it they sat on the bar. So
               // the site's values are handed back, read again, and the move
               // redone on top of them.
+              // Position can change through an ancestor's class or an inline
+              // style without changing this element's class. Release it and
+              // let candidates() decide again: an absolute child of the
+              // returned header must not keep a viewport offset of its own.
+              var previous = shifted[i];
+              var replaced = previous.levers.some(function(lv){
+                return lv.written != null &&
+                  (el2.style.getPropertyValue(lv.p) !== lv.written ||
+                   el2.style.getPropertyPriority(lv.p) !== lv.writtenPriority);
+              });
+              if (p2 !== previous.position || replaced){
+                restore(previous); shifted.splice(i, 1); continue;
+              }
               if ((el2.getAttribute('class') || '') !== shifted[i].cls){
                 var old = shifted[i];
                 restore(old);
@@ -1721,6 +1768,7 @@ object PageTopInset {
                 try { cs3 = window.getComputedStyle(el2); } catch (e) { shifted.splice(i, 1); continue; }
                 var fresh = record(el2, cs3, vh);
                 fresh.shell = old.shell;
+                fresh.absoluteControl = old.absoluteControl;
                 shifted[i] = fresh;
               }
               // A bar held as hidden that the site has brought back without a
@@ -1750,7 +1798,11 @@ object PageTopInset {
               try { cs2 = window.getComputedStyle(found[j]); } catch (e) { continue; }
               var rec2 = record(found[j], cs2, vh);
               // Held as long as it stays absolute (see the live test above).
-              rec2.shell = cs2.position === 'absolute';
+              rec2.shell = cs2.position === 'absolute' && !docScrolls();
+              // Unlike an app shell, a document-top control belongs to a
+              // scrollable page and must keep its corrected document
+              // position as it scrolls away.
+              rec2.absoluteControl = cs2.position === 'absolute' && !rec2.shell;
               shifted.push(rec2);
             }
             for (var n2 = 0; n2 < shifted.length; n2++) write(shifted[n2]);

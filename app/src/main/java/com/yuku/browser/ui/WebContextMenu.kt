@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
@@ -38,11 +39,20 @@ import androidx.compose.ui.unit.dp
 import com.yuku.browser.core.UrlUtils
 import com.yuku.browser.core.WebContextTarget
 import com.yuku.browser.ui.theme.BarBg
+import com.yuku.browser.ui.theme.Glassy
 import com.yuku.browser.ui.theme.HairLine
 import com.yuku.browser.ui.theme.InkMuted
 import com.yuku.browser.ui.theme.InkStrong
+import com.yuku.browser.ui.theme.LocalAero
+import com.yuku.browser.ui.theme.LocalNinety8
+import com.yuku.browser.ui.theme.LocalNothing
+import com.yuku.browser.ui.theme.aeroGlassIf
+import com.yuku.browser.ui.theme.bevel98If
+import com.yuku.browser.ui.theme.hardShadow98
 import kotlin.math.roundToInt
 import com.yuku.browser.ui.theme.specialCorner
+import com.yuku.browser.ui.theme.tuiBloomIf
+import com.yuku.browser.ui.theme.tuiCrtIf
 
 /** Gap between the finger and the nearest edge of the menu. */
 private val MENU_GAP = 12.dp
@@ -90,7 +100,9 @@ fun WebContextMenu(
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.32f))
+                // Dense black under translucent Aero glass turns the blue
+                // pane grey. Match the lighter scrim used by the app's sheets.
+                .background(Color.Black.copy(alpha = if (LocalAero.current) 0.12f else 0.32f))
                 .clickable(
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null,
@@ -165,15 +177,27 @@ private fun MenuCard(
     val haptics = rememberHaptics()
     val link = target.linkUrl
     val image = target.imageUrl
+    val shape = specialCorner(20.dp)
+    val ninety8 = LocalNinety8.current
     Surface(
         color = BarBg,
-        shape = specialCorner(20.dp),
-        shadowElevation = 12.dp,
+        shape = shape,
+        shadowElevation = if (ninety8) 0.dp else 12.dp,
         // Wide enough for "Open in new tab" on one line, never wider than a
         // comfortable reading measure — the header wraps instead.
-        modifier = Modifier.widthIn(min = 240.dp, max = 320.dp),
+        modifier = Modifier
+            .widthIn(min = 240.dp, max = 320.dp)
+            .then(if (ninety8) Modifier.hardShadow98() else Modifier),
     ) {
-        Column(Modifier.padding(vertical = 8.dp)) {
+        Column(
+            Modifier
+                .then(if (LocalNothing.current) Modifier.border(1.dp, HairLine, shape) else Modifier)
+                .bevel98If()
+                .aeroGlassIf(20.dp, Glassy.Pane)
+                .tuiCrtIf()
+                .tuiBloomIf()
+                .padding(vertical = 8.dp)
+        ) {
             Header(target)
             if (link != null) {
                 MenuRow(Icons.Filled.OpenInBrowser, "Open", onClick = { onOpen(link) }) {}

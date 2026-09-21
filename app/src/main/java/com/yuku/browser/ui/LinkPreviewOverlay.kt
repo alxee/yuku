@@ -11,6 +11,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -38,8 +39,8 @@ import com.yuku.browser.ui.theme.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import com.yuku.browser.ui.theme.Text
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -51,6 +52,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
@@ -58,6 +60,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Constraints
@@ -68,9 +71,23 @@ import androidx.compose.ui.util.lerp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.yuku.browser.core.LinkPreview
 import com.yuku.browser.ui.theme.BarBg
+import com.yuku.browser.ui.theme.Bevel
+import com.yuku.browser.ui.theme.FieldBg
+import com.yuku.browser.ui.theme.Glassy
 import com.yuku.browser.ui.theme.HairLine
 import com.yuku.browser.ui.theme.InkStrong
+import com.yuku.browser.ui.theme.LocalAero
+import com.yuku.browser.ui.theme.LocalNinety8
+import com.yuku.browser.ui.theme.LocalNothing
 import com.yuku.browser.ui.theme.PageBg
+import com.yuku.browser.ui.theme.aeroGlassIf
+import com.yuku.browser.ui.theme.aeroGlareIf
+import com.yuku.browser.ui.theme.aeroPopIf
+import com.yuku.browser.ui.theme.aeroDroplet
+import com.yuku.browser.ui.theme.bevel98If
+import com.yuku.browser.ui.theme.hardShadow98
+import com.yuku.browser.ui.theme.tuiBloomIf
+import com.yuku.browser.ui.theme.tuiCrtIf
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlin.math.abs
@@ -91,7 +108,14 @@ private val PREVIEW_SHADOW = 16.dp
 /** Between the card and the actions under it. */
 private val PREVIEW_ACTION_GAP = 12.dp
 
-private val ACTION_BAR_HEIGHT = 62.dp
+private val ACTION_BAR_HEIGHT = 74.dp
+private val AERO_ACTION_BAR_HEIGHT = 86.dp
+
+/** Width of each pill; enough for the longest label without crowding its rim. */
+private val ACTION_WIDTH = 104.dp
+
+/** Matches the nominal corner used by Aero's page-glass droplet region. */
+private val ACTION_TRAY_CORNER = 24.dp
 
 /**
  * How small the card starts and ends. Further from 1 than the app's menus
@@ -218,10 +242,18 @@ fun LinkPreviewOverlay(
     onOpenInBackgroundTab: ((String) -> Unit)? = null,
     onCopyLink: (String) -> Unit,
     onDismiss: () -> Unit,
+    /** Bounds of the action tray, used by the page layer for Aero's real backdrop blur. */
+    onActionBounds: (Rect) -> Unit = {},
 ) {
     var last by remember { mutableStateOf<LinkPreview?>(null) }
     LaunchedEffect(preview) { preview?.let { last = it } }
     val shown = preview ?: last ?: return
+    val reportActionBounds by rememberUpdatedState(onActionBounds)
+    // The blur is rendered on the page layer below this overlay. Do not leave
+    // a ghost frosted rectangle behind after the preview's exit completes.
+    DisposableEffect(Unit) {
+        onDispose { reportActionBounds(Rect.Zero) }
+    }
     val scope = rememberCoroutineScope()
     // The promotion: the card grows into the page underneath while that page
     // loads, and dissolves once it has painted. [promoting] latches so a
@@ -309,7 +341,8 @@ fun LinkPreviewOverlay(
         // single animated value during composition.
         val marginPx = with(density) { PREVIEW_SIDE_MARGIN.toPx() }
         val gapPx = with(density) { PREVIEW_ACTION_GAP.toPx() }
-        val barPx = with(density) { ACTION_BAR_HEIGHT.toPx() }
+        val actionBarHeight = if (LocalAero.current) AERO_ACTION_BAR_HEIGHT else ACTION_BAR_HEIGHT
+        val barPx = with(density) { actionBarHeight.toPx() }
         val cardWidth = overlay.width - marginPx * 2
         val cardHeight = overlay.height * PREVIEW_HEIGHT_FRACTION
         val columnTop = (overlay.height - (cardHeight + gapPx + barPx)) / 2f
@@ -424,6 +457,7 @@ fun LinkPreviewOverlay(
                     }
                 } ?: { _: String -> promote(onOpenInNewTab) },
                 onCopyLink = onCopyLink,
+                onBounds = reportActionBounds,
             )
         }
     }
@@ -786,12 +820,19 @@ private fun PreviewActions(
     onOpen: (String) -> Unit,
     onOpenInNewTab: (String) -> Unit,
     onCopyLink: (String) -> Unit,
+    onBounds: (Rect) -> Unit,
 ) {
     val haptics = rememberHaptics()
+    val shape = specialCorner(ACTION_TRAY_CORNER)
+    val ninety8 = LocalNinety8.current
+    val aero = LocalAero.current
     Surface(
         color = BarBg,
-        shape = specialCorner(20.dp),
-        shadowElevation = 12.dp,
+        shape = shape,
+        // 98's floating menus use a hard offset block, never a blurred
+        // Material shadow. The other looks retain the soft lift this control
+        // already had.
+        shadowElevation = if (ninety8 || aero) 0.dp else 12.dp,
         modifier = Modifier
             .graphicsLayer {
                 alpha = fade()
@@ -799,17 +840,59 @@ private fun PreviewActions(
                 scaleX = s
                 scaleY = s
                 translationY = offsetY()
+                if (aero) {
+                    // Keep the shadow on the fading layer itself. A child
+                    // Surface shadow is cropped to this layer's rectangular
+                    // offscreen buffer as soon as alpha drops below one.
+                    this.shape = shape
+                    clip = true
+                    shadowElevation = 12.dp.toPx()
+                }
+            }
+            .then(if (ninety8) Modifier.hardShadow98() else Modifier)
+            .onGloballyPositioned { coordinates ->
+                onBounds(
+                    Rect(
+                        coordinates.localToRoot(androidx.compose.ui.geometry.Offset.Zero),
+                        coordinates.localToRoot(
+                            androidx.compose.ui.geometry.Offset(
+                                coordinates.size.width.toFloat(),
+                                coordinates.size.height.toFloat(),
+                            )
+                        ),
+                    )
+                )
             }
             .pointerInput(Unit) { detectTapGestures { } },
     ) {
         Row(
-            Modifier.height(ACTION_BAR_HEIGHT),
+            Modifier
+                .height(if (aero) AERO_ACTION_BAR_HEIGHT else ACTION_BAR_HEIGHT)
+                .then(if (aero) Modifier else Modifier.padding(6.dp))
+                // The tray is a small sheet canvas: the same translucent
+                // BarBg supplied by Surface, wet rim and stationary grain.
+                // It is deliberately ONE rounded rectangle under three
+                // separate pills, with no rules subdividing the canvas.
+                .then(if (LocalNothing.current) Modifier.border(1.dp, HairLine, shape) else Modifier)
+                .bevel98If()
+                .then(
+                    if (aero) Modifier
+                        .aeroDroplet(ACTION_TRAY_CORNER, thin = true)
+                        .grain(AERO_BAR_GRAIN)
+                    else Modifier
+                )
+                .tuiCrtIf()
+                .tuiBloomIf()
+                // Draw Aero's canvas rim at the tray boundary, before the
+                // content inset; drawing it inside creates a shared pill
+                // around the three independently styled buttons.
+                .then(if (aero) Modifier.padding(horizontal = 6.dp, vertical = 12.dp) else Modifier),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Action(Icons.Filled.OpenInBrowser, "Open") { onOpen(url) }
-            ActionDivider()
+            ActionGap()
             Action(Icons.Filled.Tab, "New tab") { onOpenInNewTab(url) }
-            ActionDivider()
+            ActionGap()
             Action(Icons.Filled.ContentCopy, "Copy link") {
                 // Taking something away with you — the same weight the menu's
                 // copy of a page address has.
@@ -821,14 +904,7 @@ private fun PreviewActions(
 }
 
 @Composable
-private fun ActionDivider() {
-    VerticalDivider(
-        color = HairLine,
-        modifier = Modifier
-            .height(24.dp)
-            .width(1.dp),
-    )
-}
+private fun ActionGap() = Spacer(Modifier.width(4.dp))
 
 @Composable
 private fun Action(
@@ -836,12 +912,27 @@ private fun Action(
     label: String,
     onClick: () -> Unit,
 ) {
+    val aero = LocalAero.current
+    val pill = specialCorner(24.dp)
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
         modifier = Modifier
-            .width(96.dp)
+            .width(ACTION_WIDTH)
             .fillMaxHeight()
+            // The same pill as the switcher's Close all control: a clipped
+            // field well with glass, glare and a pop instead of a transparent
+            // hit target floating on the tray.
+            .aeroPopIf()
+            .then(
+                if (aero) Modifier
+                    .clip(pill)
+                    .background(FieldBg.copy(alpha = 0.22f))
+                    .aeroGlassIf(24.dp, Glassy.Field)
+                    .aeroGlareIf(24.dp)
+                else Modifier
+            )
+            .bevel98If(Bevel.Raised, inset = 4.dp)
             .clickable(onClick = onClick)
             .padding(horizontal = 8.dp),
     ) {
